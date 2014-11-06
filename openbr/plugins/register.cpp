@@ -18,6 +18,7 @@
 #include "openbr_internal.h"
 
 #include "openbr/core/opencvutils.h"
+#include "openbr/core/qtutils.h"
 
 using namespace cv;
 
@@ -125,7 +126,7 @@ BR_REGISTER(Transform, AffineTransform)
  * \brief Flips the image about an axis.
  * \author Josh Klontz \cite jklontz
  */
-class FlipTransform : public UntrainableTransform
+class FlipTransform : public UntrainableMetaTransform
 {
     Q_OBJECT
     Q_ENUMS(Axis)
@@ -140,9 +141,24 @@ public:
 private:
     BR_PROPERTY(Axis, axis, Y)
 
-    void project(const Template &src, Template &dst) const
+    void project(const TemplateList &src, TemplateList &dst) const
     {
-        flip(src, dst, axis);
+        dst.append(src.first());
+        for (int i=0; i<src.size(); i++) {
+            Mat buffer;
+            flip(src[i], buffer, axis);
+            dst.append(Template(src[i].file,buffer));
+
+            // Flip dst.last.points()
+            dst.last().file.setPoints(QtUtils::flipPoints(dst.last().file.points(),src[i].m().rows,src[i].m().cols));
+            //dst.last().file.setPoints(QtUtils::flipRects(dst.last().file.points()));
+        }
+    }
+
+    void project(const Template &src, Template &dst) const {
+        TemplateList temp;
+        project(TemplateList() << src, temp);
+        if (!temp.isEmpty()) dst = temp.first();
     }
 };
 
