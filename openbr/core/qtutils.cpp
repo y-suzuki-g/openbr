@@ -478,6 +478,14 @@ float euclideanLength(const QPointF &point)
     return sqrt(pow(point.x(), 2) + pow(point.y(), 2));
 }
 
+QList<QPointF> flipPoints(const QList<QPointF> &points, int rows, int cols)
+{
+    QList<QPointF> flippedPoints;
+    foreach(const QPointF &point, points)
+        flippedPoints.append(QPointF(cols-point.x(),point.y()));
+    return flippedPoints;
+}
+
 float overlap(const QRectF &r, const QRectF &s) {
     QRectF intersection = r & s;
 

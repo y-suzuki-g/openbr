@@ -89,8 +89,10 @@ namespace QtUtils
 
     /**** Point Utilities ****/
     float euclideanLength(const QPointF &point);
+    QList<QPointF> flipPoints(const QList<QPointF> &points, int rows, int cols);
 
     /**** Rect Utilities ****/
+    QList<QRectF> flipRects(const QList<QPointF> &rects);
     float overlap(const QRectF &r, const QRectF &s);
 }
 
