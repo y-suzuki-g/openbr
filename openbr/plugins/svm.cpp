@@ -163,7 +163,6 @@ static void trainSVM(SVM &svm, Mat data, Mat lab, int kernel, int type, float C,
             for (float gammaParam = gammaGrid.min_val, gammaN = 0; gammaParam < gammaGrid.max_val; gammaN += 1., gammaParam = gammaGrid.min_val*pow(gammaGrid.step,gammaN)) {
                 for (float pParam = pGrid.min_val, pN = 0; pParam < pGrid.max_val; pN += 1., pParam = pGrid.min_val*pow(pGrid.step,pN)) {
                     for (float cParam = cGrid.min_val, cN = 0; cParam < cGrid.max_val; cN += 1., cParam = cGrid.min_val*pow(cGrid.step,cN)) {
-                        //qDebug() << "Training on params: " << cParam << pParam << gammaParam;
                         params.C = cParam; params.p = pParam; params.gamma = gammaParam;
                         futures.addFuture(QtConcurrent::run(_trainSVM, data, lab, params));
                     }
@@ -173,7 +172,7 @@ static void trainSVM(SVM &svm, Mat data, Mat lab, int kernel, int type, float C,
             float minSupport = std::numeric_limits<float>::max();
             CvSVMParams bestParams;
             for (int i=0; i<futures.futures().size(); i++) {
-                if (futures.futures().at(i).result().averageErrorRate < minSupport) {
+                if (futures.futures().at(i).result().averageErrorRate < minSupport && futures.futures().at(i).result().averageSVCount < 1200) {
                     bestParams = futures.futures().at(i).result().params;
                     minSupport = futures.futures().at(i).result().averageErrorRate;
                 }
@@ -186,6 +185,7 @@ static void trainSVM(SVM &svm, Mat data, Mat lab, int kernel, int type, float C,
     } else {
         params.C = C;
         params.gamma = gamma;
+        params.p = .05;
         svm.train(data, lab, Mat(), Mat(), params);
     }
 
@@ -262,12 +262,14 @@ private:
             qFatal("Decision function for multiclass classification not implemented.");
 
         dst = src;
+
         float prediction = svm.predict(src.m().reshape(1, 1), returnDFVal);
         if (returnDFVal) {
             dst.m() = Mat(1, 1, CV_32F);
             dst.m().at<float>(0, 0) = prediction;
             // positive values ==> first class
             // negative values ==> second class
+            qDebug() << prediction;
             if (type != EPS_SVR && type != NU_SVR)
                 prediction = prediction > 0 ? 0 : 1;
         }
@@ -289,6 +291,7 @@ private:
     void load(QDataStream &stream)
     {
         loadSVM(svm, stream);
+        qDebug() << "SVM Support Vectors: " << svm.get_support_vector_count();
         stream >> labelMap >> reverseLookup;
     }
 
