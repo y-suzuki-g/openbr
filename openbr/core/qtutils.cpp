@@ -481,8 +481,16 @@ float euclideanLength(const QPointF &point)
 QList<QPointF> flipPoints(const QList<QPointF> &points, int rows, int cols)
 {
     QList<QPointF> flippedPoints;
+
     foreach(const QPointF &point, points)
         flippedPoints.append(QPointF(cols-point.x(),point.y()));
+
+    std::swap(flippedPoints[0],flippedPoints[2]);
+    std::swap(flippedPoints[1],flippedPoints[3]);
+    std::swap(flippedPoints[0],flippedPoints[1]);
+    std::swap(flippedPoints[2],flippedPoints[3]);
+    std::swap(flippedPoints[5],flippedPoints[6]);
+
     return flippedPoints;
 }
 
