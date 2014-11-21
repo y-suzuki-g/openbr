@@ -119,6 +119,37 @@ class DownsampleTrainingTransform : public Transform
 };
 BR_REGISTER(Transform, DownsampleTrainingTransform)
 
+class RestrictToGroundTruthTransform : public UntrainableTransform
+{
+    Q_OBJECT
+    Q_PROPERTY(float fraction READ get_fraction WRITE set_fraction RESET reset_fraction STORED false)
+    BR_PROPERTY(float, fraction, 1)
+
+    void project(const Template &src, Template &dst) const
+    {
+        dst = src;
+        dst.file.clearRects();
+
+        foreach (const QRectF &r, src.file.rects()) {
+            int inside = 0;
+            foreach (QPointF p, src.file.points())
+                if (r.contains(p))
+                    inside++;
+
+            if (inside >= (src.file.points().size() * fraction)) {
+                dst.file.appendRect(r);
+                break;
+            }
+        }
+
+        if (dst.file.rects().isEmpty()) {
+            dst.file.fte = true;
+            qWarning("No rect contained %.2f of points for %s.",fraction,qPrintable(src.file.flat()));
+        }
+    }
+};
+BR_REGISTER(Transform, RestrictToGroundTruthTransform)
+
 /*!
  * \ingroup transforms
  * \brief Clones the transform so that it can be applied independently.
