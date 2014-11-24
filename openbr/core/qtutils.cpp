@@ -485,11 +485,42 @@ QList<QPointF> flipPoints(const QList<QPointF> &points, int rows, int cols)
     foreach(const QPointF &point, points)
         flippedPoints.append(QPointF(cols-point.x(),point.y()));
 
-    std::swap(flippedPoints[0],flippedPoints[2]);
-    std::swap(flippedPoints[1],flippedPoints[3]);
-    std::swap(flippedPoints[0],flippedPoints[1]);
-    std::swap(flippedPoints[2],flippedPoints[3]);
-    std::swap(flippedPoints[5],flippedPoints[6]);
+    // Specific to 68 points
+
+    // Chin
+    int index = 16;
+    for (int i=0; i<index/2; i++) {
+        std::swap(flippedPoints[i],flippedPoints[index-i]);
+    }
+
+    // Eyebrows
+    for (int i=17, j=26; j>i; i++, j--)
+        std::swap(flippedPoints[i],flippedPoints[j]);
+
+    // Nose tip
+    std::swap(flippedPoints[31],flippedPoints[35]);
+    std::swap(flippedPoints[32],flippedPoints[34]);
+
+    // Mouth
+    std::swap(flippedPoints[48],flippedPoints[54]);
+    std::swap(flippedPoints[49],flippedPoints[53]);
+    std::swap(flippedPoints[50],flippedPoints[52]);
+
+    std::swap(flippedPoints[55],flippedPoints[59]);
+    std::swap(flippedPoints[56],flippedPoints[58]);
+
+    std::swap(flippedPoints[60],flippedPoints[64]);
+    std::swap(flippedPoints[61],flippedPoints[63]);
+
+    std::swap(flippedPoints[65],flippedPoints[67]);
+
+    // Eyes
+    std::swap(flippedPoints[36],flippedPoints[45]);
+    std::swap(flippedPoints[37],flippedPoints[44]);
+    std::swap(flippedPoints[38],flippedPoints[43]);
+    std::swap(flippedPoints[39],flippedPoints[42]);
+    std::swap(flippedPoints[40],flippedPoints[47]);
+    std::swap(flippedPoints[41],flippedPoints[46]);
 
     return flippedPoints;
 }
