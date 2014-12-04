@@ -161,6 +161,14 @@ BR_EXPORT void br_project(const char *input, const char *output);
 BR_EXPORT float br_eval(const char *simmat, const char *mask, const char *csv = "", int matches = 0);
 
 /*!
+ * \brief Evaluates the similarity matrix using the mask matrix.  Function aborts ff TAR @ FAR = 0.001 does not meet an expected performance value
+ * \param simmat The \ref simmat to use.
+ * \param mask The \ref mask to use.
+ * \param accuracy Desired true accept rate at false accept rate of one in one thousand.
+ */
+ BR_EXPORT void br_assert_eval(const char *simmat, const char *mask, const float accuracy);
+
+/*!
  * \brief Creates a \c .csv file containing performance metrics from evaluating the similarity matrix using galleries containing ground truth labels
  * \param simmat The \ref simmat to use.
  * \param target the name of a gallery containing metadata for the target set.
@@ -197,7 +205,7 @@ BR_EXPORT void br_eval_clustering(const char *csv, const char *gallery, const ch
  * \param normalize Optional \c bool flag to normalize predicted bounding boxes for improved detection. 
  * \return Average detection bounding box overlap.
  */
-BR_EXPORT float br_eval_detection(const char *predicted_gallery, const char *truth_gallery, const char *csv = "", bool normalize = false, int minSize = 0);
+BR_EXPORT float br_eval_detection(const char *predicted_gallery, const char *truth_gallery, const char *csv = "", bool normalize = false, int minSize = 0, int maxSize = 0);
 
 /*!
  * \brief Evaluates and prints landmarking accuracy to terminal.

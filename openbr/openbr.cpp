@@ -109,6 +109,11 @@ float br_eval(const char *simmat, const char *mask, const char *csv, int matches
     return Evaluate(simmat, mask, csv, matches);
 }
 
+void br_assert_eval(const char *simmat, const char *mask, const float accuracy)
+{
+    assertEval(simmat, mask, accuracy);
+}
+
 float br_inplace_eval(const char *simmat, const char *target, const char *query, const char *csv)
 {
     return InplaceEval(simmat, target, query, csv);
@@ -124,9 +129,9 @@ void br_eval_clustering(const char *csv, const char *gallery, const char *truth_
     EvalClustering(csv, gallery, truth_property);
 }
 
-float br_eval_detection(const char *predicted_gallery, const char *truth_gallery, const char *csv, bool normalize, int minSize)
+float br_eval_detection(const char *predicted_gallery, const char *truth_gallery, const char *csv, bool normalize, int minSize, int maxSize)
 {
-    return EvalDetection(predicted_gallery, truth_gallery, csv, normalize, minSize);
+    return EvalDetection(predicted_gallery, truth_gallery, csv, normalize, minSize, maxSize);
 }
 
 float br_eval_landmarking(const char *predicted_gallery, const char *truth_gallery, const char *csv, int normalization_index_a, int normalization_index_b)
