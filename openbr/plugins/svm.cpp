@@ -269,7 +269,6 @@ private:
             dst.m().at<float>(0, 0) = prediction;
             // positive values ==> first class
             // negative values ==> second class
-            qDebug() << prediction;
             if (type != EPS_SVR && type != NU_SVR)
                 prediction = prediction > 0 ? 0 : 1;
         }
@@ -291,7 +290,6 @@ private:
     void load(QDataStream &stream)
     {
         loadSVM(svm, stream);
-        qDebug() << "SVM Support Vectors: " << svm.get_support_vector_count();
         stream >> labelMap >> reverseLookup;
     }
 

@@ -91,7 +91,7 @@ void readFile(const QString &file, QByteArray &data, bool uncompress)
     QFile f(file);
     if (!f.open(QFile::ReadOnly)) {
         if (f.exists()) qFatal("Unable to open %s for reading. Check file permissions.", qPrintable(file));
-        else            qFatal("Unable to open %s for reading. File does not exist.", qPrintable(file));
+        else            return;
     }
     data = f.readAll();
     if (uncompress) data = qUncompress(data);

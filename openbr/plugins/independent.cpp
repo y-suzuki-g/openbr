@@ -144,7 +144,8 @@ class RestrictToGroundTruthTransform : public UntrainableTransform
 
         if (dst.file.rects().isEmpty()) {
             dst.file.fte = true;
-            qWarning("No rect contained %.2f of points for %s.",fraction,qPrintable(src.file.flat()));
+            if (Globals->verbose)
+                qWarning("No rect contained %.2f of points for %s.",fraction,qPrintable(src.file.flat()));
         }
     }
 };
