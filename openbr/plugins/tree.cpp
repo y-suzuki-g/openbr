@@ -146,6 +146,122 @@ class ForestTransform : public Transform
 
 BR_REGISTER(Transform, ForestTransform)
 
+class Stage
+{
+public:
+    Stage() { threshold = -FLT_MAX; params = CvBoostParams(); }
+    Stage(const CvBoostParams &_params) { threshold = -FLT_MAX; params = _params; }
+
+    QList<int> feature_indices() const { return featureIndices; }
+
+    bool train(const Mat &data, const Mat &labels, float minTAR, float maxFAR, int max_count)
+    {
+        Mat types = Mat(data.cols + 1, 1, CV_8U);
+        types.setTo(Scalar(CV_VAR_NUMERICAL));
+        types.at<char>(data.cols, 0) = CV_VAR_CATEGORICAL;
+
+        Mat tData = data.clone();
+
+        for (int i = 0; i < max_count; i++) {
+            qDebug("rows: %d cols: %d type: %d", tData.rows, tData.cols, tData.type());
+            if (!boost.train(tData, CV_ROW_SAMPLE, labels, Mat(), Mat(), types, Mat(), params, true))
+                return false;
+            qDebug("Hello again");
+            updateVisited(tData);
+            setThreshold(tData, labels, minTAR);
+            if (isErrDesired(tData, labels, minTAR, maxFAR))
+                return true;
+        }
+
+        return true;
+    }
+
+    float predict(const Mat &image, bool raw = false) const
+    {
+        float val = boost.predict(image, Mat(), Range::all(), false, true);
+        if (raw)
+            return val;
+        return fabs(val - threshold) > FLT_EPSILON ? 1.0f : -1.0f;
+    }
+
+    void load(QDataStream &stream)
+    {
+        loadModel(boost, stream);
+        params = boost.get_params();
+        stream >> threshold;
+        stream >> featureIndices;
+    }
+
+    void store(QDataStream &stream) const
+    {
+        storeModel(boost, stream);
+        stream << threshold;
+        stream << featureIndices;
+    }
+
+private:
+    CvBoost boost;
+    CvBoostParams params;
+    float threshold;
+    QList<int> featureIndices;
+
+    void updateVisited(Mat &data)
+    {
+        CvSeq *classifiers = boost.get_weak_predictors();
+        CvSeqReader reader;
+        cvStartReadSeq(classifiers, &reader);
+        cvSetSeqReaderPos(&reader, classifiers->total - 1);
+        CvBoostTree* tree;
+        CV_READ_SEQ_ELEM(tree, reader);
+
+        int visitedIdx = tree->get_root()->split->var_idx;
+        featureIndices.append(visitedIdx);
+        data.col(visitedIdx).setTo(Scalar(0));
+    }
+
+    void setThreshold(const Mat &data, const Mat &labels, float minTAR)
+    {
+        QList<float> preds;
+        for (int i = 0; i < data.rows; i++)
+            if (labels.at<float>(i) == 1.0f)
+                preds.append(predict(data.row(i), true));
+
+        sort(preds.begin(), preds.end());
+        int threshIdx = (int)((1.0f - minTAR) * preds.size());
+        threshold = preds[threshIdx];
+    }
+
+    bool isErrDesired(const Mat &data, const Mat &labels, float minTAR, float maxFAR) const
+    {
+        float TAR, FAR;
+        int posCorrect = 0, totalPos = 0;
+        int negCorrect = 0, totalNeg = 0;
+
+        for (int i = 0; i < data.rows; i++) {
+            float response = predict(data.row(i));
+            if (labels.at<float>(i) == 1.0f) {
+                totalPos++;
+                if (response == 1.0f)
+                    posCorrect++;
+            } else {
+                totalNeg++;
+                if (response == -1.0f)
+                    negCorrect++;
+            }
+        }
+
+        TAR = (float)posCorrect / totalPos;
+        FAR = 1 - ((float)negCorrect / totalNeg);
+
+        qDebug("| %.4d | %.11f | %.11f |", featureIndices.size(), TAR, FAR);
+        qDebug("+------+---------------+---------------+");
+
+        if (TAR < minTAR || FAR > maxFAR)
+            return false;
+        return true;
+    }
+};
+
 /*!
  * \ingroup transforms
  * \brief Wraps OpenCV's Ada Boost framework
@@ -194,75 +310,7 @@ private:
     BR_PROPERTY(int, folds, 0)
     BR_PROPERTY(int, maxDepth, 1)
 
-    struct Stage
-    {
-        CvBoost boost;
-        CvBoostParams params;
-        float threshold;
-        float minTAR;
-        QList<int> featureIndices;
-
-        Stage() {
-            threshold = -FLT_MAX;
-            minTAR = 0.0f;
-            params = CvBoostParams();
-        }
-
-        Stage(const CvBoostParams &_params, const float _minTAR) {
-            threshold = -FLT_MAX;
-            minTAR = _minTAR;
-            params = _params;
-        }
-
-        bool train(Mat data, Mat labels) {
-            Mat types = Mat(data.cols + 1, 1, CV_8U);
-            types.setTo(Scalar(CV_VAR_NUMERICAL));
-            types.at<char>(data.cols, 0) = CV_VAR_CATEGORICAL;
-
-            if (!boost.train(data, CV_ROW_SAMPLE, labels, Mat(), Mat(), types, Mat(), params, true))
-                return false;
-
-            QList<float> preds;
-
-            int numPos = 0;
-            for (int i = 0; i < data.rows; i++) {
-                if (labels.at<int>(0, i) == 1) {
-                    numPos++;
-                    preds.append(predict(data.row(i), true));
-                }
-            }
-
-            sort(preds.begin(), preds.end());
-            int threshIdx = (int)((1.0f - minTAR) * numPos);
-            threshold = preds[threshIdx];
-
-            CvSeq *classifiers = boost.get_weak_predictors();
-            CvSeqReader reader;
-            cvStartReadSeq(classifiers, &reader);
-            cvSetSeqReaderPos(&reader, classifiers->total - 1);
-            CvBoostTree* tree;
-            CV_READ_SEQ_ELEM(tree, reader);
-            qDebug("idx: %d", tree->get_root()->split->var_idx);
-            featureIndices.append(tree->get_root()->split->var_idx);
-
-            return true;
-        }
-
-        float predict(const Mat &image, bool raw = false) const {
-            float val = boost.predict(image, Mat(), Range::all(), false, true);
-            if (raw)
-                return val;
-            return fabs(val - threshold) > FLT_EPSILON ? 1.0f : -1.0f;
-        }
-    };
-
     QList<Stage> stages;
-
-    void init()
-    {
-        if (!rep)
-            qFatal("CascadeClassifier requires a representation!");
-    }
 
     void train(const QList<Mat> &images, const QList<float> &labels)
     {
@@ -283,23 +331,16 @@ private:
         params.max_depth = maxDepth;
 
         for (int ns = 0; ns < numStages; ns++) {
-            qDebug("\n\nStage %d", ns);
-            qDebug("+---------------+---------------+");
-            qDebug("|      TAR      |      FAR      |");
-            qDebug("+---------------+---------------+");
+            qDebug("\n");
+            qDebug("=============== Stage %.2d ===============", ns);
+            qDebug("+------+---------------+---------------+");
+            qDebug("|  wc  |      TAR      |      FAR      |");
+            qDebug("+------+---------------+---------------+");
 
-            Stage stage(params, minTAR);
-            for (int i = 0; i < weakCount; i++) {
-                if (!stage.train(data, _labels)) {
-                    qDebug("Training ended. Returning");
-                    return;
-                }
-                if (crossValidate(stage, data, _labels)) {
-                    stages.append(stage);
-                    updateTrainData(stage, data, _labels);
-                    break;
-                }
-            }
+            Stage stage(params);
+            if (!stage.train(data, _labels, minTAR, maxFAR, weakCount))
+                return;
+            updateTrainData(stage, data, _labels);
         }
     }
 
@@ -307,7 +348,7 @@ private:
     {
         Mat img = rep->preprocess(image);
         foreach (const Stage &stage, stages) {
-            Mat response = rep->evaluate(img, stage.featureIndices);
+            Mat response = rep->evaluate(img, stage.feature_indices());
             if (stage.predict(response) == -1.0f)
                 return -1.0f;
         }
@@ -319,52 +360,15 @@ private:
         int numStages;
         stream >> numStages;
         for (int i = 0; i < numStages; i++) {
-            Stage stage;
-            loadModel(stage.boost, stream);
-            stage.params = stage.boost.get_params();
-            stream >> stage.threshold;
-            stream >> stage.minTAR;
-            stream >> stage.featureIndices;
+            Stage stage; stage.load(stream);
         }
     }
 
     void store(QDataStream &stream) const
     {
         stream << stages.size();
-        foreach (const Stage &stage, stages) {
-            storeModel(stage.boost, stream);
-            stream << stage.threshold;
-            stream << stage.minTAR;
-            stream << stage.featureIndices;
-        }
-    }
-
-    bool crossValidate(Stage &stage, const Mat data, const Mat labels)
-    {
-        float TAR, FAR;
-        int posCorrect = 0, totalPos = 0;
-        int negCorrect = 0, totalNeg = 0;
-
-        for (int i = 0; i < data.rows; i++) {
-            float response = stage.predict(data.row(i));
-            if (labels.at<int>(0, i) == 1) {
-                totalPos++;
-                if (response == 1.0f)
-                    posCorrect++;
-            } else {
-                totalNeg++;
-                if (response == -1.0f)
-                    negCorrect++;
-            }
-        }
-        TAR = (float)posCorrect / totalPos;
-        FAR = 1 - ((float)negCorrect / totalNeg);
-
-        qDebug("| %.13f | %.13f |", TAR, FAR);
-
-        if (TAR < minTAR || FAR > maxFAR)
-            return false;
-        return true;
+        foreach (const Stage &stage, stages)
+            stage.store(stream);
     }
 
     void updateTrainData(const Stage &stage, Mat &data, Mat &labels)
@@ -403,17 +407,11 @@ class CascadeTestTransform : public Transform
     Q_PROPERTY(br::Classifier* classifier READ get_classifier WRITE set_classifier RESET reset_classifier STORED false)
     BR_PROPERTY(br::Classifier*, classifier, NULL)
 
-    void init()
-    {
-        if (!classifier)
-            qFatal("CascadeTest requires a classifier");
-    }
-
     void train(const TemplateList &data)
     {
         QList<Mat> images;
         foreach (const Template &t, data)
-            images.append(t);
+            images.append(t.m());
 
         QList<float> labels = File::get<float>(data, "Label");
 
