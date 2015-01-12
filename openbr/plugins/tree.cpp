@@ -163,14 +163,21 @@ public:
         Mat tData = data.clone();
 
         for (int i = 0; i < max_count; i++) {
-            qDebug("rows: %d cols: %d type: %d", tData.rows, tData.cols, tData.type());
-            if (!boost.train(tData, CV_ROW_SAMPLE, labels, Mat(), Mat(), types, Mat(), params, true))
+            if (!boost.train(tData, CV_ROW_SAMPLE, labels, Mat(), Mat(), types, Mat(), params, false))
                 return false;
-            qDebug("Hello again");
-            updateVisited(tData);
+
+            //updateVisited(tData);
             setThreshold(tData, labels, minTAR);
-            if (isErrDesired(tData, labels, minTAR, maxFAR))
+            if (isErrDesired(tData, labels, minTAR, maxFAR)) {
                 return true;
+            } else if (i < max_count-1) {
+                CvBoostParams newParams = params;
+                newParams.weak_count++;
+                boost.clear();
+                params = newParams;
+            } else {
+                qWarning("Did not achieve desired TAR and FAR values with %d weak classifiers.", params.weak_count);
+            }
         }
 
         return true;
@@ -181,7 +188,7 @@ public:
         float val = boost.predict(image, Mat(), Range::all(), false, true);
         if (raw)
             return val;
-        return fabs(val - threshold) > FLT_EPSILON ? 1.0f : -1.0f;
+        return val >= threshold ? 1 : 0;
     }
 
     void load(QDataStream &stream)
@@ -197,6 +204,20 @@ public:
         storeModel(boost, stream);
         stream << threshold;
         stream << featureIndices;
+    }
+
+    void visited()
+    {
+        CvSeq *classifiers = boost.get_weak_predictors();
+        CvSeqReader reader;
+        cvStartReadSeq(classifiers, &reader);
+
+        for (int i=0; i<classifiers->total; i++) {
+            cvSetSeqReaderPos(&reader, i);
+            CvBoostTree* tree;
+            CV_READ_SEQ_ELEM(tree, reader);
+            qDebug() << tree->get_root()->split->var_idx;
+        }
     }
 
 private:
@@ -223,11 +244,14 @@ private:
     {
         QList<float> preds;
         for (int i = 0; i < data.rows; i++)
-            if (labels.at<float>(i) == 1.0f)
+            if (labels.at<float>(i) == 1)
                 preds.append(predict(data.row(i), true));
 
+        // preds = raw output for positive classes
         sort(preds.begin(), preds.end());
-        int threshIdx = (int)((1.0f - minTAR) * preds.size());
+        int threshIdx = (1 - minTAR) * preds.size();
+
+        // At what threshold do we account for a minTAR TAR rate
         threshold = preds[threshIdx];
     }
 
@@ -239,13 +263,13 @@ private:
 
         for (int i = 0; i < data.rows; i++) {
             float response = predict(data.row(i));
-            if (labels.at<float>(i) == 1.0f) {
+            if (labels.at<float>(i) == 1) {
                 totalPos++;
-                if (response == 1.0f)
+                if (response == 1)
                     posCorrect++;
             } else {
                 totalNeg++;
-                if (response == -1.0f)
+                if (response == 0)
                     negCorrect++;
             }
         }
@@ -253,7 +277,7 @@ private:
         TAR = (float)posCorrect / totalPos;
         FAR = 1 - ((float)negCorrect / totalNeg);
 
-        qDebug("| %.4d | %.11f | %.11f |", featureIndices.size(), TAR, FAR);
+        qDebug("| %.4d | %.11f | %.11f |", params.weak_count, TAR, FAR);
         qDebug("+------+---------------+---------------+");
 
         if (TAR < minTAR || FAR > maxFAR)
@@ -285,6 +309,7 @@ class CascadeClassifier : public Classifier
     Q_PROPERTY(float trimRate READ get_trimRate WRITE set_trimRate RESET reset_trimRate STORED false)
     Q_PROPERTY(int folds READ get_folds WRITE set_folds RESET reset_folds STORED false)
     Q_PROPERTY(int maxDepth READ get_maxDepth WRITE set_maxDepth RESET reset_maxDepth STORED false)
+    Q_PROPERTY(int minNegSamples READ get_minNegSamples WRITE set_minNegSamples RESET reset_minNegSamples STORED false)
 
 public:
     enum Type { Discrete = CvBoost::DISCRETE,
@@ -301,14 +326,15 @@ private:
     BR_PROPERTY(br::Representation*, rep, NULL)
     BR_PROPERTY(bool, ROCMode, false)
     BR_PROPERTY(int, numStages, 20)
-    BR_PROPERTY(float, minTAR, 0.995f)
-    BR_PROPERTY(float, maxFAR, 0.5f)
+    BR_PROPERTY(float, minTAR, 0.995)
+    BR_PROPERTY(float, maxFAR, 0.5)
     BR_PROPERTY(Type, type, Gentle)
     BR_PROPERTY(SplitCriteria, splitCriteria, Default)
     BR_PROPERTY(int, weakCount, 100)
     BR_PROPERTY(float, trimRate, .95)
     BR_PROPERTY(int, folds, 0)
     BR_PROPERTY(int, maxDepth, 1)
+    BR_PROPERTY(int, minNegSamples, 50)
 
     QList<Stage> stages;
 
@@ -340,7 +366,10 @@ private:
             Stage stage(params);
             if (!stage.train(data, _labels, minTAR, maxFAR, weakCount))
                 return;
-            updateTrainData(stage, data, _labels);
+            //stage.visited();
+            stages.append(stage);
+            if (!updateTrainData(stage, data, _labels))
+                return;
         }
     }
 
@@ -349,7 +378,7 @@ private:
         Mat img = rep->preprocess(image);
         foreach (const Stage &stage, stages) {
             Mat response = rep->evaluate(img, stage.feature_indices());
-            if (stage.predict(response) == -1.0f)
+            if (stage.predict(response) == 0)
                 return -1.0f;
         }
         return 1.0f;
@@ -371,31 +400,40 @@ private:
             stage.store(stream);
     }
 
-    void updateTrainData(const Stage &stage, Mat &data, Mat &labels)
+    bool updateTrainData(const Stage &stage, Mat &data, Mat &labels)
     {
+        // This needs to be fixed (keep should be false positives + true positives)
         int keep = 0;
         for (int i = 0; i < data.rows; i++)
-            if (labels.at<float>(0, i) == stage.predict(data.row(i)))
+            if (labels.at<float>(0, i) == 1 || stage.predict(data.row(i)))
                 keep++;
 
         Mat newData(keep, rep->numFeatures(), CV_32F);
         Mat newLabels(1, keep, CV_32F);
         int idx = 0;
         for (int i = 0; i < data.rows; i++) {
-            if (stage.predict(data.row(i)) != 1.0f) continue; // only keep true positives and false negatives
-
-            if (labels.at<float>(0, i) == 1) {
-                data.row(i).copyTo(newData.row(idx));
-                newLabels.at<float>(0, idx) = labels.at<float>(0, i);
-                idx++;
-            } else if (labels.at<float>(0, 1) == -1) {
-                data.row(i).copyTo(newData.row(idx));
-                newLabels.at<float>(0, idx) = labels.at<float>(0, i);
-                idx++;
+            // Keep true positives, and false negatives TODO: optimize
+            if (labels.at<float>(0, i) == 1 || stage.predict(data.row(i)) == 1) {
+                if (labels.at<float>(0, i) == 1) {
+                    data.row(i).copyTo(newData.row(idx));
+                    newLabels.at<float>(0, idx) = labels.at<float>(0, i);
+                    idx++;
+                } else if (labels.at<float>(0, i) == 0) {
+                    data.row(i).copyTo(newData.row(idx));
+                    newLabels.at<float>(0, idx) = labels.at<float>(0, i);
+                    idx++;
+                }
             }
         }
         data = newData;
         labels = newLabels;
+
+        // Data size << negative samples << positive samples
+        qDebug("Total Data: %d Positive Samples %d Negative Samples %d", labels.cols, countNonZero(labels), labels.cols - countNonZero(labels));
+        if (labels.cols - countNonZero(labels) < minNegSamples)
+            return false;
+        else
+            return true;
     }
 };
 
@@ -426,6 +464,31 @@ class CascadeTestTransform : public Transform
 };
 
 BR_REGISTER(Transform, CascadeTestTransform)
+
+class TransformRepresentation : public Representation
+{
+    Q_OBJECT
+    Q_PROPERTY(br::Transform* transform READ get_transform WRITE set_transform RESET reset_transform STORED false)
+    BR_PROPERTY(br::Transform*, transform, NULL)
+    Q_PROPERTY(int size READ get_size WRITE set_size RESET reset_size STORED false)
+    BR_PROPERTY(int, size, 24)
+
+    Mat evaluate(const Mat &image, const QList<int> &indices) const
+    {
+        (void) indices;
+
+        Template dst;
+        transform->project(Template(File(),image),dst);
+        return dst;
+    }
+
+    int numFeatures() const
+    {
+        return size;
+    }
+};
+
+BR_REGISTER(Representation, TransformRepresentation)
 
 } // namespace br
 
