@@ -139,27 +139,21 @@ private:
         numPos = labels.count(1.0f);
         numNeg = labels.size() - numPos;
 
-        // TODO: should multithread this
+        QFutureSynchronizer<void> sync;
         for (int i = 0; i < images.size(); i++) {
-            QtConcurrent::run(this, &CascadeClassifier::parallelFill, images[i], labels[i], i);
+            sync.addFuture(QtConcurrent::run(this, &CascadeClassifier::parallelFill, images[i], labels[i], i));
             printf("Filled %d / %d\r", i+1, images.size());
         }
     }
 
     bool updateTrainingSet(double& acceptanceRatio, int &numSamples)
     {
-        int passedPos = 0, passedNeg = 0, maxNumSamples = numSamples;
-        bool updatedSampleCount = false;
+        int passedPos = 0, passedNeg = 0;
         int idx = 0;
-        for (int i = 0; i < maxNumSamples; idx++, i++) {
-            while (idx < maxNumSamples) {
-                float label = storage->getLabel(idx);
-                if (label != 1.0f && !updatedSampleCount) { // don't keep to many neg images
-                    updatedSampleCount = true;
-                    maxNumSamples = passedPos + cvRound(((double)numNeg * (double)passedPos) / numPos);
-                }
-
+        for (int i = 0; i < numSamples; idx++, i++) {
+            while (idx < numSamples) {
                 if (predictPrecalc(idx) == 1.0f) {
+                    float label = storage->getLabel(idx);
                     label == 1.0f ? passedPos++ : passedNeg++;
                     storage->setImage(storage->data.row(idx), label, i);
                     break;
@@ -172,19 +166,18 @@ private:
             return false;
 
         numSamples = passedPos + passedNeg;
-        acceptanceRatio = ( (double)passedNeg/(double)numNeg );
+        acceptanceRatio = ( (double)passedNeg / (double)numNeg );
         qDebug() << "POS passed : total    " << passedPos << ":" << numPos;
         qDebug() << "NEG passed : acceptanceRatio    " << passedNeg << ":" << acceptanceRatio;
 
-        return false;
+        return true;
     }
 
     int predictPrecalc(int sampleIdx)
     {
-        foreach (const CascadeBoost *stage, stages) {
+        foreach (const CascadeBoost *stage, stages)
             if (stage->predict(sampleIdx) == 0.f)
                 return 0;
-        }
         return 1;
     }
 };

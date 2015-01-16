@@ -27,7 +27,9 @@ struct CascadeDataStorage
 
     void setImage(const cv::Mat &sample, float label, int idx);
 
-    int numSamples() const { return data.cols; }
+    int numSamples()  const { return data.cols; }
+    int numPos()      const { return cv::countNonZero(labels); }
+    int numNeg()      const { return data.cols - cv::countNonZero(labels); }
     int numFeatures() const { return data.rows; }
     float getResponse(int featureIdx, int sampleIdx) const { return data.at<float>(featureIdx, sampleIdx); }
     float getLabel(int sampleIdx) const { return labels.at<float>(sampleIdx); }
@@ -38,14 +40,9 @@ struct CascadeDataStorage
 
 struct CascadeBoostTrainData : CvDTreeTrainData
 {
-    CascadeBoostTrainData( CascadeDataStorage *_storage,
-                             const CvDTreeParams& _params );
     CascadeBoostTrainData(CascadeDataStorage *_storage,
                              int _numSamples,
                              const CvDTreeParams& _params = CvDTreeParams() );
-    virtual void setData( CascadeDataStorage *_storage,
-                          int _numSamples,
-                          const CvDTreeParams& _params=CvDTreeParams() );
     void sort();
 
     virtual CvDTreeNode* subsample_data( const CvMat* _subsample_idx );
@@ -58,7 +55,6 @@ struct CascadeBoostTrainData : CvDTreeTrainData
                                   const float** ordValues, const int** sortedIndices, int* sampleIndicesBuf );
     virtual const int* get_cat_var_data( CvDTreeNode* n, int vi, int* catValuesBuf );
     virtual float getVarValue( int vi, int si );
-    virtual void free_train_data();
 
     CascadeDataStorage *storage;
     CvMat _resp; // for casting

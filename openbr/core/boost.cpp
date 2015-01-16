@@ -366,60 +366,9 @@ CvDTreeNode* CascadeBoostTrainData::subsample_data( const CvMat* _subsample_idx 
     return root;
 }
 
-CascadeBoostTrainData::CascadeBoostTrainData( CascadeDataStorage *_storage,
-                                                  const CvDTreeParams& _params )
-{
-    qDebug("is this ever called?");
-    is_classifier = true;
-    var_all = var_count = _storage->numFeatures();
-
-    storage = _storage;
-    _resp = _storage->labels;
-    const int maxCatCount = ((CascadeBoostParams*)&_params)->maxCatCount;
-
-    shared = true;
-    set_params( _params );
-    max_c_count = MAX( 2, maxCatCount );
-    var_type = cvCreateMat( 1, var_count + 2, CV_32SC1 );
-    if ( maxCatCount > 0 )
-    {
-        cat_var_count = var_count;
-        ord_var_count = 0;
-        for( int vi = 0; vi < var_count; vi++ )
-        {
-            var_type->data.i[vi] = vi;
-        }
-    }
-    else
-    {
-        cat_var_count = 0;
-        ord_var_count = var_count;
-        for( int vi = 1; vi <= var_count; vi++ )
-        {
-            var_type->data.i[vi-1] = -vi;
-        }
-    }
-    var_type->data.i[var_count] = cat_var_count;
-    var_type->data.i[var_count+1] = cat_var_count+1;
-
-    int maxSplitSize = cvAlign(sizeof(CvDTreeSplit) + (MAX(0,max_c_count - 33)/32)*sizeof(int),sizeof(void*));
-    int treeBlockSize = MAX((int)sizeof(CvDTreeNode)*8, maxSplitSize);
-    treeBlockSize = MAX(treeBlockSize + BlockSizeDelta, MinBlockSize);
-    tree_storage = cvCreateMemStorage( treeBlockSize );
-    node_heap = cvCreateSet( 0, sizeof(node_heap[0]), sizeof(CvDTreeNode), tree_storage );
-    split_heap = cvCreateSet( 0, sizeof(split_heap[0]), maxSplitSize, tree_storage );
-}
-
 CascadeBoostTrainData::CascadeBoostTrainData( CascadeDataStorage* _storage,
                                               int _numSamples,
                                               const CvDTreeParams& _params )
-{
-    setData( _storage, _numSamples, _params );
-}
-
-void CascadeBoostTrainData::setData( CascadeDataStorage *_storage,
-                                     int _numSamples,
-                                     const CvDTreeParams& _params )
 {
     int* idst = 0;
     unsigned short* udst = 0;
@@ -445,7 +394,6 @@ void CascadeBoostTrainData::setData( CascadeDataStorage *_storage,
     max_c_count = MAX( 2, maxCatCount);
     _resp = storage->labels;
     responses = &_resp;
-    // TODO: check responses: elements must be 0 or 1
 
     var_count = var_all = storage->numFeatures();
     sample_count = _numSamples;
@@ -554,17 +502,12 @@ void CascadeBoostTrainData::setData( CascadeDataStorage *_storage,
     split_buf = cvCreateMat( 1, sample_count, CV_32SC1 );//TODO: make a pointer
 }
 
-void CascadeBoostTrainData::free_train_data()
-{
-    CvDTreeTrainData::free_train_data();
-}
-
 const int* CascadeBoostTrainData::get_class_labels( CvDTreeNode* n, int* labelsBuf)
 {
     int nodeSampleCount = n->sample_count;
     int rStep = CV_IS_MAT_CONT( responses->type ) ? 1 : responses->step / CV_ELEM_SIZE( responses->type );
 
-    int* sampleIndicesBuf = labelsBuf; //
+    int* sampleIndicesBuf = labelsBuf;
     const int* sampleIndices = get_sample_indices(n, sampleIndicesBuf);
     for( int si = 0; si < nodeSampleCount; si++ )
     {
@@ -619,15 +562,8 @@ const int* CascadeBoostTrainData::get_cat_var_data( CvDTreeNode* n, int vi, int*
     const int* sampleIndices = get_sample_indices(n, sampleIndicesBuf);
 
     if ( vi < var_count )
-    {
         for( int i = 0; i < nodeSampleCount; i++ )
-            catValuesBuf[i] = (int) storage->getResponse( vi, sampleIndices[i]);
-    }
-    else
-    {
-        get_cv_labels( n, catValuesBuf );
-    }
-
+            catValuesBuf[i] = (int)storage->getResponse( vi, sampleIndices[i]);
     return catValuesBuf;
 }
 
@@ -672,9 +608,7 @@ struct FeatureIdxSort : ParallelLoopBody
 
 void CascadeBoostTrainData::sort()
 {
-    qDebug() << "Sorting feature responses...";
-    parallel_for_( Range(0, var_count), // should only have to do this one.
-                   FeatureIdxSort(storage, buf, sample_count, is_buf_16u!=0) );
+    parallel_for_( Range(0, var_count), FeatureIdxSort(storage, buf, sample_count, is_buf_16u!=0) );
 }
 
 
@@ -686,7 +620,7 @@ CvDTreeNode* CascadeBoostTree::predict( int sampleIdx ) const
     if( !node )
         CV_Error( CV_StsError, "The tree has not been trained yet" );
 
-    if ( ((CascadeBoostParams*)&data->params)->maxCatCount == 0 ) // ordered
+    if ( ((CascadeBoostParams*)&((CascadeBoostTrainData*)&data)->params)->maxCatCount == 0 ) // ordered
     {
         while( node->left )
         {
@@ -1300,40 +1234,39 @@ void CascadeBoost::update_weights( CvBoostTree* tree )
 
 bool CascadeBoost::isErrDesired()
 {
-    int sCount = data->sample_count,
-        numPos = 0, numNeg = 0, numFalse = 0, numPosTrue = 0;
-    vector<float> eval(sCount);
+    int sampleCount = data->sample_count;
+    QList<float> eval;
 
-    for( int i = 0; i < sCount; i++ )
+    for( int i = 0; i < sampleCount; i++ )
         if( ((CascadeBoostTrainData*)data)->storage->getLabel( i ) == 1.0F )
-            eval[numPos++] = predict( i, true );
-    icvSortFlt( &eval[0], numPos, 0 );
+            eval.append(predict( i, true ));
+    sort(eval.begin(), eval.end());
+
+    int numPos = eval.size(), numNeg = sampleCount - numPos;
+
     int thresholdIdx = (int)((1.0F - minTAR) * numPos);
     threshold = eval[ thresholdIdx ];
-    numPosTrue = numPos - thresholdIdx;
+
+    int numPosTrue = numPos - thresholdIdx;
     for( int i = thresholdIdx - 1; i >= 0; i--)
         if ( std::abs( eval[i] - threshold) < FLT_EPSILON )
             numPosTrue++;
-    float hitRate = ((float) numPosTrue) / ((float) numPos);
+    float TAR = ((float) numPosTrue) / ((float) numPos);
 
-    for( int i = 0; i < sCount; i++ )
-    {
+    int numFalse = 0;
+    for( int i = 0; i < sampleCount; i++ )
         if( ((CascadeBoostTrainData*)data)->storage->getLabel( i ) == 0.0F )
-        {
-            numNeg++;
             if( predict( i ) )
                 numFalse++;
-        }
-    }
-    float falseAlarm = ((float) numFalse) / ((float) numNeg);
+    float FAR = ((float) numFalse) / ((float) numNeg);
 
     cout << "|"; cout.width(4); cout << right << weak->total;
-    cout << "|"; cout.width(9); cout << right << hitRate;
-    cout << "|"; cout.width(9); cout << right << falseAlarm;
+    cout << "|"; cout.width(9); cout << right << TAR;
+    cout << "|"; cout.width(9); cout << right << FAR;
     cout << "|" << endl;
     cout << "+----+---------+---------+" << endl;
 
-    return falseAlarm <= maxFAR;
+    return FAR <= maxFAR;
 }
 
 void CascadeBoost::store(QDataStream &stream) const
