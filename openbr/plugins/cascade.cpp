@@ -144,6 +144,7 @@ private:
             sync.addFuture(QtConcurrent::run(this, &CascadeClassifier::parallelFill, images[i], labels[i], i));
             printf("Filled %d / %d\r", i+1, images.size());
         }
+        sync.waitForFinished();
     }
 
     bool updateTrainingSet(double& acceptanceRatio, int &numSamples)
@@ -155,7 +156,7 @@ private:
                 if (predictPrecalc(idx) == 1.0f) {
                     float label = storage->getLabel(idx);
                     label == 1.0f ? passedPos++ : passedNeg++;
-                    storage->setImage(storage->data.row(idx), label, i);
+                    storage->setImage(storage->data.col(idx), label, i);
                     break;
                 }
                 idx++;
