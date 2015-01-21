@@ -30,9 +30,6 @@ logRatio( double val )
     return log( val/(1. - val) );
 }
 
-#define CV_CMP_FLT(i,j) (i < j)
-static CV_IMPLEMENT_QSORT_EX( icvSortFlt, float, CV_CMP_FLT, const float* )
-
 #define CV_CMP_NUM_IDX(i,j) (aux[i] < aux[j])
 static CV_IMPLEMENT_QSORT_EX( icvSortIntAux, int, CV_CMP_NUM_IDX, const float* )
 static CV_IMPLEMENT_QSORT_EX( icvSortUShAux, unsigned short, CV_CMP_NUM_IDX, const float* )
@@ -189,16 +186,16 @@ void CascadeBoostParams::store(QDataStream &stream) const
 
 CascadeDataStorage::CascadeDataStorage(int numFeatures, int numSamples)
 {
-    data.create(numFeatures, numSamples, CV_32FC1);
+    float *temp = new float[(int64)numFeatures * (int64)numSamples];
+    data = Mat(numFeatures, numSamples, CV_32FC1, temp);
     labels.create(1, numSamples, CV_32FC1);
 }
 
 void CascadeDataStorage::setImage(const Mat &sample, float label, int idx)
 {
-    //assume sample is already 1xnumFeatures array
-    for (int i = 0; i < numFeatures(); i++)
-        data.at<float>(i, idx) = sample.at<float>(0, i);
-    labels.at<float>(0, idx) = label;
+    CV_Assert(sample.rows == 1 || sample.cols == 1); // sample must be 1D
+    std::copy(sample.begin<float>(), sample.end<float>(), (float*)data.col(idx).data);
+    labels.at<float>(idx) = label;
 }
 
 CvDTreeNode* CascadeBoostTrainData::subsample_data( const CvMat* _subsample_idx )
@@ -658,6 +655,7 @@ void CascadeBoostTree::store( QDataStream &stream) const
     while (!internalNodesQueue.empty())
     {
         tempNode = internalNodesQueue.front();
+        qDebug() << "leaf val:" << leafValIdx;
         CV_Assert( tempNode->left );
         if ( !tempNode->left->left && !tempNode->left->right) // left node is leaf
         {
@@ -1235,28 +1233,28 @@ void CascadeBoost::update_weights( CvBoostTree* tree )
 bool CascadeBoost::isErrDesired()
 {
     int sampleCount = data->sample_count;
-    QList<float> eval;
+    QList<float> responses;
 
     for( int i = 0; i < sampleCount; i++ )
-        if( ((CascadeBoostTrainData*)data)->storage->getLabel( i ) == 1.0F )
-            eval.append(predict( i, true ));
-    sort(eval.begin(), eval.end());
+        if( ((CascadeBoostTrainData*)data)->storage->getLabel(i) == 1.0F )
+            responses.append(predict(i, true));
+    sort(responses.begin(), responses.end());
 
-    int numPos = eval.size(), numNeg = sampleCount - numPos;
+    int numPos = responses.size(), numNeg = sampleCount - numPos;
 
     int thresholdIdx = (int)((1.0F - minTAR) * numPos);
-    threshold = eval[ thresholdIdx ];
+    threshold = responses[thresholdIdx];
 
     int numPosTrue = numPos - thresholdIdx;
-    for( int i = thresholdIdx - 1; i >= 0; i--)
-        if ( std::abs( eval[i] - threshold) < FLT_EPSILON )
+    for( int i = thresholdIdx - 1; i >= 0; i--) // add pos values lower than the threshold that have the same response
+        if ( std::abs( responses[i] - threshold) < FLT_EPSILON )
             numPosTrue++;
     float TAR = ((float) numPosTrue) / ((float) numPos);
 
     int numFalse = 0;
     for( int i = 0; i < sampleCount; i++ )
-        if( ((CascadeBoostTrainData*)data)->storage->getLabel( i ) == 0.0F )
-            if( predict( i ) )
+        if( ((CascadeBoostTrainData*)data)->storage->getLabel(i) == 0.0F )
+            if( predict(i) )
                 numFalse++;
     float FAR = ((float) numFalse) / ((float) numNeg);
 

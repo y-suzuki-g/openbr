@@ -2,9 +2,6 @@
 #include "openbr/openbr_plugin.h"
 #include "openbr/core/boost.h"
 #include "openbr/core/opencvutils.h"
-#include "openbr/core/qtutils.h"
-
-#include <QtConcurrent>
 
 using namespace cv;
 using namespace std;
@@ -25,8 +22,11 @@ class CascadeClassifier : public Classifier
 
     QList<Classifier*> stages;
 
-    void train(const QList<cv::Mat> &images, const QList<float> &labels)
+    void train(const QList<Mat> &images, const QList<float> &labels)
     {
+        QList<Mat> _images(images); // mutable copy
+        QList<float> _labels(labels); // mutable copy
+
         int numPos = labels.count(1.0f);
         int numNeg = (int)labels.size() - numPos;
         double currFar;
@@ -36,7 +36,7 @@ class CascadeClassifier : public Classifier
         for (int i = 0; i < numStages; i++) {
             qDebug() << "\n===== TRAINING" << i << "stage =====";
             qDebug() << "<BEGIN";
-            if (!updateTrainingSet(currFar, images, labels, numPos, numNeg)) {
+            if (!updateTrainingSet(currFar, _images, _labels, numPos, numNeg)) {
                 qDebug() << "Train dataset for temp stage can not be filled. Branch training terminated.";
                 break;
             }
@@ -65,7 +65,7 @@ class CascadeClassifier : public Classifier
             qFatal("Training failed. Check training data");
     }
 
-    float classify(const Mat &image, bool returnSum) const
+    float classify(const Mat &image, bool returnSum = false) const
     {
         for (int i = 0; i < stages.size() - 1; i++)
             if (stage->classify(image) == 0.0f)
@@ -97,7 +97,7 @@ private:
     }
 };
 
-BR_REGISTER(Transform, CascadeTransform)
+BR_REGISTER(Classifier, CascadeClassifier)
 
 } // namespace br
 

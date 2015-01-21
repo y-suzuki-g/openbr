@@ -64,6 +64,7 @@ class CascadeBoostTree : public CvBoostTree
 {
 public:
     virtual CvDTreeNode* predict( int sampleIdx ) const;
+    virtual CvDTreeNode* predict( const QMap<int, float> &responses ) const;
     void store(QDataStream &stream) const;
 
 protected:
@@ -73,12 +74,13 @@ protected:
 class CascadeBoost : public CvBoost
 {
 public:
-    virtual bool train( CascadeDataStorage *_storage,
-                        int _numSamples,
-                        CascadeBoostParams& _params );
+    virtual bool train( CascadeDataStorage *_storage, int _numSamples, CascadeBoostParams& _params );
     virtual float predict( int sampleIdx, bool returnSum = false ) const;
+    virtual float predict( const QMap<int, float> &responses, bool returnSum = false ) const;
 
     float getThreshold() const { return threshold; }
+    QList<int> getIndices() const { return indices; }
+
     void store(QDataStream &stream) const;
 
 protected:
@@ -87,6 +89,7 @@ protected:
     virtual bool isErrDesired();
 
     float threshold;
+    QList<int> indices;
     float minTAR, maxFAR;
 };
 
