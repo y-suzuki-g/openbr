@@ -16,82 +16,39 @@ class CascadeClassifier : public Classifier
 {
     Q_OBJECT
 
-public:
-    Q_ENUMS(Type)
-
-    // Cascade params
-    Q_PROPERTY(br::Representation* representation READ get_representation WRITE set_representation RESET reset_representation STORED false)
-    Q_PROPERTY(int winWidth READ get_winWidth WRITE set_winWidth RESET reset_winWidth STORED false)
-    Q_PROPERTY(int winHeight READ get_winHeight WRITE set_winHeight RESET reset_winHeight STORED false)
+    Q_PROPERTY(QString description READ get_description WRITE set_description RESET reset_description STORED false)
     Q_PROPERTY(int numStages READ get_numStages WRITE set_numStages RESET reset_numStages STORED false)
-    BR_PROPERTY(br::Representation*, representation, NULL)
-    BR_PROPERTY(int, winWidth, 24)
-    BR_PROPERTY(int, winHeight, 24)
-    BR_PROPERTY(int, numStages, 20)
-
-    enum Type { Discrete = CvBoost::DISCRETE,
-                Real = CvBoost::REAL,
-                Logit = CvBoost::LOGIT,
-                Gentle = CvBoost::GENTLE };
-
-    // Stage params
-    Q_PROPERTY(Type boostType READ get_boostType WRITE set_boostType RESET reset_boostType STORED false)
-    Q_PROPERTY(float minTAR READ get_minTAR WRITE set_minTAR RESET reset_minTAR STORED false)
     Q_PROPERTY(float maxFAR READ get_maxFAR WRITE set_maxFAR RESET reset_maxFAR STORED false)
-    Q_PROPERTY(float trimRate READ get_trimRate WRITE set_trimRate RESET reset_trimRate STORED false)
-    Q_PROPERTY(int maxDepth READ get_maxDepth WRITE set_maxDepth RESET reset_maxDepth STORED false)
-    Q_PROPERTY(int maxWeakCount READ get_maxWeakCount WRITE set_maxWeakCount RESET reset_maxWeakCount STORED false)
-    BR_PROPERTY(Type, boostType, Gentle)
-    BR_PROPERTY(float, minTAR, 0.995)
-    BR_PROPERTY(float, maxFAR, 0.5)
-    BR_PROPERTY(float, trimRate, 0.95)
-    BR_PROPERTY(int, maxDepth, 1)
-    BR_PROPERTY(int, maxWeakCount, 100)
+    BR_PROPERTY(QString, description, "")
+    BR_PROPERTY(int, numStages, 20)
+    BR_PROPERTY(float, maxFAR, 0.005)
 
-    // training values
-    QList<CascadeBoost*> stages;
-    CascadeDataStorage *storage;
-    int numNeg, numPos;
+    QList<Classifier*> stages;
 
-    void train(const QList<Mat> &images, const QList<float> &labels)
+    void train(const QList<cv::Mat> &images, const QList<float> &labels)
     {
+        int numPos = labels.count(1.0f);
+        int numNeg = (int)labels.size() - numPos;
+        double currFar;
+
         const clock_t begin_time = clock();
-
-        foreach (float label, labels)
-            if (label != 1.0f && label != 0.0f)
-                qFatal("Labels must be either 1 (POS) or 0 (NEG) for boosting");
-
-        numPos = labels.count(1.0f);
-        numNeg = (int)labels.size() - numPos;
-        int numSamples = numPos + numNeg;
-
-        storage = new CascadeDataStorage(representation->numFeatures(), images.size());
-        fillStorage(images, labels);
-
-        double requiredLeafFARate = pow((double)maxFAR, (double)numStages) / (double)maxDepth;
-        double tempLeafFARate;
-
-        CascadeBoostParams params(boostType, 0, minTAR, maxFAR, trimRate, maxDepth, maxWeakCount);
 
         for (int i = 0; i < numStages; i++) {
             qDebug() << "\n===== TRAINING" << i << "stage =====";
             qDebug() << "<BEGIN";
-            if (!updateTrainingSet(tempLeafFARate, numSamples)) {
+            if (!updateTrainingSet(currFar, images, labels, numPos, numNeg)) {
                 qDebug() << "Train dataset for temp stage can not be filled. Branch training terminated.";
                 break;
             }
-            if (tempLeafFARate <= requiredLeafFARate) {
+            if (currFAR <= maxFAR) {
                 qDebug() << "Required leaf false alarm rate achieved. Branch training terminated.";
                 break;
             }
 
-            CascadeBoost* tempStage = new CascadeBoost;
-            bool isStageTrained = tempStage->train( storage, numSamples, params);
+            Classifier *tempStage = Factory<Classifier>::make(description);
+            tempStage->train(images, labels);
 
             qDebug() << "END>";
-
-            if(!isStageTrained)
-                break;
 
             stages.append(tempStage);
 
@@ -104,112 +61,51 @@ public:
             qDebug() << "Training until now has taken " << days << " days " << hours << " hours " << minutes << " minutes " << seconds_left <<" seconds." << endl;
         }
 
-        delete storage;
-
-        if(stages.size() == 0)
-            qFatal("Cascade classifier can't be trained. Check the used training parameters.");
+        if (stages.size() == 0)
+            qFatal("Training failed. Check training data");
     }
 
-    float classify(const Mat &image) const
+    float classify(const Mat &image, bool returnSum) const
     {
-        (void)image;
-        return 0.0f;
-    }
-
-    void store(QDataStream &stream) const
-    {
-        stream << numStages;
-        stream << winWidth;
-        stream << winHeight;
-        foreach (const CascadeBoost *stage, stages)
-            stage->store(stream);
+        for (int i = 0; i < stages.size() - 1; i++)
+            if (stage->classify(image) == 0.0f)
+                return 0.0f;
+        return stages.last()->classify(image, returnSum);
     }
 
 private:
-    void parallelFill(const Mat &image, float label, int idx)
-    {
-        Mat sample = representation->evaluate(image);
-        storage->setImage(sample, label, idx);
-    }
-
-    void fillStorage(const QList<Mat> &images, const QList<float> &labels)
-    {
-        qDebug() << "\nCreating Training Data...";
-
-        numPos = labels.count(1.0f);
-        numNeg = labels.size() - numPos;
-
-        QFutureSynchronizer<void> sync;
-        for (int i = 0; i < images.size(); i++) {
-            sync.addFuture(QtConcurrent::run(this, &CascadeClassifier::parallelFill, images[i], labels[i], i));
-            printf("Filled %d / %d\r", i+1, images.size());
-        }
-        sync.waitForFinished();
-    }
-
-    bool updateTrainingSet(double& acceptanceRatio, int &numSamples)
+    bool updateTrainingSet(double& currFAR, QList<Mat> &images, QList<float> &labels, int numPos, int numNeg)
     {
         int passedPos = 0, passedNeg = 0;
-        int idx = 0;
-        for (int i = 0; i < numSamples; idx++, i++) {
-            while (idx < numSamples) {
-                if (predictPrecalc(idx) == 1.0f) {
-                    float label = storage->getLabel(idx);
-                    label == 1.0f ? passedPos++ : passedNeg++;
-                    storage->setImage(storage->data.col(idx), label, i);
-                    break;
-                }
-                idx++;
+        for (int i = 0; i < images.size(); i++) {
+            if (predictPrecalc(images[i]) == 0.0f) {
+                images.removeAt(i);
+                labels.removeAt(i);
+            } else {
+                labels[i] == 0.0f ? passedNeg++ : passedPos++;
             }
         }
 
         if (passedPos == 0 || passedNeg == 0)
             return false;
 
-        numSamples = passedPos + passedNeg;
-        acceptanceRatio = ( (double)passedNeg / (double)numNeg );
+        currFAR = ( (double)passedNeg / (double)numNeg );
         qDebug() << "POS passed : total    " << passedPos << ":" << numPos;
-        qDebug() << "NEG passed : acceptanceRatio    " << passedNeg << ":" << acceptanceRatio;
+        qDebug() << "NEG passed : FAR    " << passedNeg << ":" << currFAR;
 
         return true;
     }
 
-    int predictPrecalc(int sampleIdx)
+    float predictPrecalc(const Mat &image)
     {
-        foreach (const CascadeBoost *stage, stages)
-            if (stage->predict(sampleIdx) == 0.f)
-                return 0;
-        return 1;
+        foreach (const Classifier *stage, stages)
+            if (stage->classify(image) == 0.0f)
+                return 0.0f;
+        return 1.0f;
     }
 };
 
-BR_REGISTER(Classifier, CascadeClassifier)
-
-class CascadeTestTransform : public Transform
-{
-    Q_OBJECT
-    Q_PROPERTY(br::Classifier* classifier READ get_classifier WRITE set_classifier RESET reset_classifier STORED false)
-    BR_PROPERTY(br::Classifier*, classifier, NULL)
-
-    void train(const TemplateList &data)
-    {
-        QList<Mat> images;
-        foreach (const Template &t, data)
-            images.append(t);
-
-        QList<float> labels = File::get<float>(data, "Label");
-
-        classifier->train(images, labels);
-    }
-
-    void project(const Template &src, Template &dst) const
-    {
-        (void)src;
-        (void)dst;
-    }
-};
-
-BR_REGISTER(Transform, CascadeTestTransform)
+BR_REGISTER(Transform, CascadeTransform)
 
 } // namespace br
 
