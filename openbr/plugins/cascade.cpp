@@ -78,7 +78,7 @@ private:
     {
         int passedPos = 0, passedNeg = 0;
         for (int i = 0; i < images.size(); i++) {
-            if (predictPrecalc(images[i]) == 0.0f) {
+            if (classify(images[i]) == 0.0f) {
                 images.removeAt(i);
                 labels.removeAt(i);
             } else {
@@ -94,14 +94,6 @@ private:
         qDebug() << "NEG passed : FAR    " << passedNeg << ":" << currFAR;
 
         return true;
-    }
-
-    float predictPrecalc(const Mat &image)
-    {
-        foreach (const Classifier *stage, stages)
-            if (stage->classify(image) == 0.0f)
-                return 0.0f;
-        return 1.0f;
     }
 };
 
