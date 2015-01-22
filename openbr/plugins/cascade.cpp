@@ -72,6 +72,24 @@ class CascadeClassifier : public Classifier
         return val;
     }
 
+    void store(QDataStream &stream) const
+    {
+        stream << stages.size();
+        foreach (const Classifier *stage, stages)
+            stage->store(stream);
+    }
+
+    void load(QDataStream &stream)
+    {
+        int _numStages;
+        stream >> _numStages;
+        for (int i = 0; i < _numStages; i++) {
+            Classifier *tempStage = Factory<Classifier>::make("." + description);
+            tempStage->load(stream);
+            stages.append(tempStage);
+        }
+    }
+
 private:
     bool updateTrainingSet(QList<Mat> &images, QList<float> &labels, int numPos, int numNeg)
     {
@@ -132,6 +150,16 @@ class CascadeTest : public Transform
     {
         (void)src;
         (void)dst;
+    }
+
+    void store(QDataStream &stream) const
+    {
+        classifier->store(stream);
+    }
+
+    void load(QDataStream &stream)
+    {
+        classifier->load(stream);
     }
 };
 
