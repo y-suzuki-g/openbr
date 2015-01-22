@@ -35,8 +35,8 @@ struct CascadeBoostParams : CvBoostParams
     CascadeBoostParams( int _boostType, int _maxCatCount, float _minTAR, float _maxFAR,
                           double _weightTrimRate, int _maxDepth, int _maxWeakCount );
     virtual ~CascadeBoostParams() {}
-    void write( cv::FileStorage &fs ) const;
-    bool read( const cv::FileNode &node );
+    void store(QDataStream &stream) const;
+    void load(QDataStream &stream);
 };
 
 struct CascadeBoostTrainData : CvDTreeTrainData
@@ -95,7 +95,9 @@ public:
     void freeTrainData() { data->free_train_data(); }
     float getThreshold() const { return threshold; }
 
+    void save( const char *filename ) const;
     void write( cv::FileStorage &fs ) const;
+    void load( const char *filename, const CascadeDataStorage *_storage, const CascadeBoostParams &_params);
     bool read( const cv::FileNode &node, const CascadeDataStorage* _storage,
                const CascadeBoostParams& _params );
 

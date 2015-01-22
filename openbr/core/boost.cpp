@@ -17,17 +17,8 @@ using cv::ParallelLoopBody;
 #include <queue>
 #include "cxmisc.h"
 
-#define CC_BOOST            "BOOST"
-#define CC_BOOST_TYPE       "boostType"
-#define CC_DISCRETE_BOOST   "DAB"
-#define CC_REAL_BOOST       "RAB"
-#define CC_LOGIT_BOOST      "LB"
-#define CC_GENTLE_BOOST     "GAB"
-#define CC_MINTAR           "minTAR"
-#define CC_MAXFAR           "maxFAR"
-#define CC_TRIM_RATE        "weightTrimRate"
-#define CC_MAX_DEPTH        "maxDepth"
-#define CC_WEAK_COUNT       "maxWeakCount"
+#define CC_BOOST            "boost"
+#define CC_WEAK_COUNT       "weakCount"
 #define CC_STAGE_THRESHOLD  "stageThreshold"
 #define CC_WEAK_CLASSIFIERS "weakClassifiers"
 #define CC_INTERNAL_NODES   "internalNodes"
@@ -186,43 +177,24 @@ CascadeBoostParams::CascadeBoostParams( int _boostType, int _maxCatCount, float 
     use_surrogates = use_1se_rule = truncate_pruned_tree = false;
 }
 
-void CascadeBoostParams::write( FileStorage &fs ) const
+void CascadeBoostParams::store(QDataStream &stream) const
 {
-    string boostTypeStr = boost_type == CvBoost::DISCRETE ? CC_DISCRETE_BOOST :
-                          boost_type == CvBoost::REAL ? CC_REAL_BOOST :
-                          boost_type == CvBoost::LOGIT ? CC_LOGIT_BOOST :
-                          boost_type == CvBoost::GENTLE ? CC_GENTLE_BOOST : string();
-    CV_Assert( !boostTypeStr.empty() );
-    fs << CC_BOOST_TYPE << boostTypeStr;
-    fs << CC_MINTAR << minTAR;
-    fs << CC_MAXFAR << maxFAR;
-    fs << CC_TRIM_RATE << weight_trim_rate;
-    fs << CC_MAX_DEPTH << max_depth;
-    fs << CC_WEAK_COUNT << weak_count;
+    stream << boost_type;
+    stream << minTAR;
+    stream << maxFAR;
+    stream << weight_trim_rate;
+    stream << max_depth;
+    stream << weak_count;
 }
 
-bool CascadeBoostParams::read( const FileNode &node )
+void CascadeBoostParams::load(QDataStream &stream)
 {
-    string boostTypeStr;
-    FileNode rnode = node[CC_BOOST_TYPE];
-    rnode >> boostTypeStr;
-    boost_type = !boostTypeStr.compare( CC_DISCRETE_BOOST ) ? CvBoost::DISCRETE :
-                 !boostTypeStr.compare( CC_REAL_BOOST ) ? CvBoost::REAL :
-                 !boostTypeStr.compare( CC_LOGIT_BOOST ) ? CvBoost::LOGIT :
-                 !boostTypeStr.compare( CC_GENTLE_BOOST ) ? CvBoost::GENTLE : -1;
-    if (boost_type == -1)
-        CV_Error( CV_StsBadArg, "unsupported Boost type" );
-    node[CC_MINTAR] >> minTAR;
-    node[CC_MAXFAR] >> maxFAR;
-    node[CC_TRIM_RATE] >> weight_trim_rate ;
-    node[CC_MAX_DEPTH] >> max_depth ;
-    node[CC_WEAK_COUNT] >> weak_count ;
-    if ( minTAR <= 0 || minTAR > 1 ||
-         maxFAR <= 0 || maxFAR > 1 ||
-         weight_trim_rate <= 0 || weight_trim_rate > 1 ||
-         max_depth <= 0 || weak_count <= 0 )
-        CV_Error( CV_StsBadArg, "bad parameters range");
-    return true;
+    stream >> boost_type;
+    stream >> minTAR;
+    stream >> maxFAR;
+    stream >> weight_trim_rate;
+    stream >> max_depth;
+    stream >> weak_count;
 }
 
 //---------------------------- CascadeDataStorage -----------------------------
@@ -1597,9 +1569,16 @@ bool CascadeBoost::isErrDesired()
     return FAR <= maxFAR;
 }
 
+void CascadeBoost::save(const char *filename) const
+{
+    FileStorage fs(filename, FileStorage::WRITE);
+    write( fs );
+}
+
 void CascadeBoost::write( FileStorage &fs ) const
 {
     CascadeBoostTree* weakTree;
+    fs << CC_BOOST << "{";
     fs << CC_WEAK_COUNT << weak->total;
     fs << CC_STAGE_THRESHOLD << threshold;
     fs << CC_WEAK_CLASSIFIERS << "[";
@@ -1609,6 +1588,15 @@ void CascadeBoost::write( FileStorage &fs ) const
         weakTree->write( fs );
     }
     fs << "]";
+    fs << "}";
+}
+
+void CascadeBoost::load(const char *filename, const CascadeDataStorage *_storage, const CascadeBoostParams &_params)
+{
+    FileStorage fs(filename, FileStorage::READ);
+    FileNode root = fs.getFirstTopLevelNode();
+    read( root, _storage, _params );
+    fs.release();
 }
 
 bool CascadeBoost::read( const FileNode &node, const CascadeDataStorage* _storage, const CascadeBoostParams& _params )
