@@ -33,12 +33,6 @@ using cv::ParallelLoopBody;
 #define CC_INTERNAL_NODES   "internalNodes"
 #define CC_LEAF_VALUES      "leafValues"
 
-#ifdef _WIN32
-#define TIME( arg ) (((double) clock()) / CLOCKS_PER_SEC)
-#else
-#define TIME( arg ) (time( arg ))
-#endif
-
 using namespace std;
 
 static inline double
@@ -854,14 +848,14 @@ void CascadeBoostTrainData::precalculate()
 {
     int minNum = MIN( numPrecalcVal, numPrecalcIdx);
 
-    double proctime = -TIME( 0 );
+    QTime start; start.start();
     parallel_for_( Range(numPrecalcVal, numPrecalcIdx),
                    FeatureIdxOnlyPrecalc(storage, buf, sample_count, is_buf_16u!=0) );
     parallel_for_( Range(0, minNum),
                    FeatureValAndIdxPrecalc(storage, buf, &valCache, sample_count, is_buf_16u!=0) );
     parallel_for_( Range(minNum, numPrecalcVal),
                    FeatureValOnlyPrecalc(storage, &valCache, sample_count) );
-    cout << "Precalculation time: " << (proctime + TIME( 0 )) << endl;
+    cout << "Precalculation time: " << (float)start.elapsed() / 1000 << " seconds" << endl;
 }
 
 //-------------------------------- CascadeBoostTree ----------------------------------------
@@ -1574,7 +1568,6 @@ bool CascadeBoost::isErrDesired()
     for( int i = 0; i < sampleCount; i++ )
         if( ((CascadeBoostTrainData*)data)->storage->label(i) == 1.0F )
             responses.append(predict(i));
-
     sort(responses.begin(), responses.end());
 
     int numPos = responses.size(), numNeg = sampleCount - numPos;
@@ -1582,18 +1575,18 @@ bool CascadeBoost::isErrDesired()
     int thresholdIdx = (int)((1.0F - minTAR) * numPos);
     threshold = responses[thresholdIdx];
 
-    int numPosTrue = numPos - thresholdIdx;
+    int numTrueAccepts = numPos - thresholdIdx;
     for( int i = thresholdIdx - 1; i >= 0; i--) // add pos values lower than the threshold that have the same response
         if ( std::abs( responses[i] - threshold) < FLT_EPSILON )
-            numPosTrue++;
-    float TAR = ((float) numPosTrue) / ((float) numPos);
+            numTrueAccepts++;
+    float TAR = ((float) numTrueAccepts) / ((float) numPos);
 
-    int numFalse = 0;
+    int numFalseAccepts = 0;
     for( int i = 0; i < sampleCount; i++ )
         if( ((CascadeBoostTrainData*)data)->storage->label(i) == 0.0F )
-            if( predict(i) < (threshold - FLT_EPSILON))
-                numFalse++;
-    float FAR = ((float) numFalse) / ((float) numNeg);
+            if( predict(i) > (threshold - FLT_EPSILON))
+                numFalseAccepts++;
+    float FAR = ((float) numFalseAccepts) / ((float) numNeg);
 
     cout << "|"; cout.width(4); cout << right << weak->total;
     cout << "|"; cout.width(9); cout << right << TAR;
@@ -1606,24 +1599,19 @@ bool CascadeBoost::isErrDesired()
 
 void CascadeBoost::write( FileStorage &fs ) const
 {
-//    char cmnt[30];
     CascadeBoostTree* weakTree;
     fs << CC_WEAK_COUNT << weak->total;
     fs << CC_STAGE_THRESHOLD << threshold;
     fs << CC_WEAK_CLASSIFIERS << "[";
     for( int wi = 0; wi < weak->total; wi++)
     {
-        /*sprintf( cmnt, "tree %i", wi );
-        cvWriteComment( fs, cmnt, 0 );*/
         weakTree = *((CascadeBoostTree**) cvGetSeqElem( weak, wi ));
         weakTree->write( fs );
     }
     fs << "]";
 }
 
-bool CascadeBoost::read( const FileNode &node,
-                           const CascadeDataStorage* _storage,
-                           const CascadeBoostParams& _params )
+bool CascadeBoost::read( const FileNode &node, const CascadeDataStorage* _storage, const CascadeBoostParams& _params )
 {
     CvMemStorage* memStorage;
     clear();

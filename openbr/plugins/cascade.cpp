@@ -33,7 +33,7 @@ class CascadeClassifier : public Classifier
         int numPos = labels.count(1.0f);
         int numNeg = (int)labels.size() - numPos;
 
-        const clock_t begin_time = clock();
+        QDateTime start = QDateTime::currentDateTime();
 
         for (int i = 0; i < numStages; i++) {
             qDebug() << "\n===== TRAINING" << i << "stage =====";
@@ -50,11 +50,12 @@ class CascadeClassifier : public Classifier
             stages.append(tempStage);
 
             // Output training time up till now
-            float seconds = float( clock() - begin_time ) / CLOCKS_PER_SEC;
-            int days = int(seconds) / 60 / 60 / 24;
-            int hours = (int(seconds) / 60 / 60) % 24;
-            int minutes = (int(seconds) / 60) % 60;
-            int seconds_left = int(seconds) % 60;
+            QDateTime now = QDateTime::currentDateTime();
+            int seconds = start.secsTo(now);
+            int days = seconds / 60 / 60 / 24;
+            int hours = (seconds / 60 / 60) % 24;
+            int minutes = (seconds / 60) % 60;
+            int seconds_left = seconds % 60;
             qDebug("Training until now has taken %d days %d hours %d minutes and %d seconds", days, hours, minutes, seconds_left);
         }
 
