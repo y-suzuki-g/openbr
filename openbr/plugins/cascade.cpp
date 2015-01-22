@@ -24,29 +24,26 @@ class CascadeClassifier : public Classifier
 
     void train(const QList<Mat> &images, const QList<float> &labels)
     {
+        if (description.isEmpty())
+            qFatal("Need a classifier description!");
+
         QList<Mat> _images(images); // mutable copy
         QList<float> _labels(labels); // mutable copy
 
         int numPos = labels.count(1.0f);
         int numNeg = (int)labels.size() - numPos;
-        double currFar;
 
         const clock_t begin_time = clock();
 
         for (int i = 0; i < numStages; i++) {
             qDebug() << "\n===== TRAINING" << i << "stage =====";
             qDebug() << "<BEGIN";
-            if (!updateTrainingSet(currFar, _images, _labels, numPos, numNeg)) {
-                qDebug() << "Train dataset for temp stage can not be filled. Branch training terminated.";
-                break;
-            }
-            if (currFAR <= maxFAR) {
-                qDebug() << "Required leaf false alarm rate achieved. Branch training terminated.";
-                break;
-            }
 
-            Classifier *tempStage = Factory<Classifier>::make(description);
-            tempStage->train(images, labels);
+            if (!updateTrainingSet(_images, _labels, numPos, numNeg))
+                break;
+
+            Classifier *tempStage = Factory<Classifier>::make("." + description);
+            tempStage->train(_images, _labels);
 
             qDebug() << "END>";
 
@@ -58,46 +55,86 @@ class CascadeClassifier : public Classifier
             int hours = (int(seconds) / 60 / 60) % 24;
             int minutes = (int(seconds) / 60) % 60;
             int seconds_left = int(seconds) % 60;
-            qDebug() << "Training until now has taken " << days << " days " << hours << " hours " << minutes << " minutes " << seconds_left <<" seconds." << endl;
+            qDebug("Training until now has taken %d days %d hours %d minutes and %d seconds", days, hours, minutes, seconds_left);
         }
 
         if (stages.size() == 0)
             qFatal("Training failed. Check training data");
     }
 
-    float classify(const Mat &image, bool returnSum = false) const
+    float classify(const Mat &image) const
     {
-        for (int i = 0; i < stages.size() - 1; i++)
-            if (stage->classify(image) == 0.0f)
-                return 0.0f;
-        return stages.last()->classify(image, returnSum);
+        float val = 0.;
+        for (int i = 0; i < stages.size(); i++)
+            if ((val = stages[i]->classify(image)) < 0.0f)
+                return val;
+        return val;
     }
 
 private:
-    bool updateTrainingSet(double& currFAR, QList<Mat> &images, QList<float> &labels, int numPos, int numNeg)
+    bool updateTrainingSet(QList<Mat> &images, QList<float> &labels, int numPos, int numNeg)
     {
-        int passedPos = 0, passedNeg = 0;
-        for (int i = 0; i < images.size(); i++) {
-            if (classify(images[i]) == 0.0f) {
+        int passedPos = 0, passedNeg = 0, i = 0;
+        while (i < images.size()) {
+            if (classify(images[i]) < 0.0f) {
                 images.removeAt(i);
                 labels.removeAt(i);
             } else {
                 labels[i] == 0.0f ? passedNeg++ : passedPos++;
+                i++;
             }
         }
 
-        if (passedPos == 0 || passedNeg == 0)
+        if (passedPos == 0 || passedNeg == 0) {
+            qDebug("Unable to update training set. Remaining samples: %d POS and %d NEG", passedPos, passedNeg);
             return false;
+        }
 
-        currFAR = ( (double)passedNeg / (double)numNeg );
-        qDebug() << "POS passed : total    " << passedPos << ":" << numPos;
-        qDebug() << "NEG passed : FAR    " << passedNeg << ":" << currFAR;
+        float FAR = ( (float)passedNeg / (float)numNeg );
+
+        if (FAR < maxFAR) {
+            qDebug("FAR is belowed desired level. Training is finished!");
+            return false;
+        }
+
+        cout << "+----+---------+---------+" << endl;
+        cout << "|  L |  Passed |    %    |" << endl;
+        cout << "+----+---------+---------+" << endl;
+        cout << "| POS|"; cout.width(9); cout << right << passedPos << "|"; cout.width(9); cout << right << (double)passedPos / (double)numPos << "|" << endl;
+        cout << "| NEG|"; cout.width(9); cout << right << passedNeg << "|"; cout.width(9); cout << right << FAR << "|" << endl;
+        cout << "+----+---------+---------+" << endl;
 
         return true;
     }
 };
 
 BR_REGISTER(Classifier, CascadeClassifier)
+
+class CascadeTest : public Transform
+{
+    Q_OBJECT
+    Q_PROPERTY(br::Classifier* classifier READ get_classifier WRITE set_classifier RESET reset_classifier STORED false)
+    BR_PROPERTY(br::Classifier*, classifier, NULL)
+
+    void train(const TemplateList &data)
+    {
+        QList<Mat> images;
+        foreach (const Template &t, data)
+            images.append(t);
+
+        QList<float> labels = File::get<float>(data, "Label");
+
+        classifier->train(images, labels);
+    }
+
+    void project(const Template &src, Template &dst) const
+    {
+        (void)src;
+        (void)dst;
+    }
+};
+
+BR_REGISTER(Transform, CascadeTest)
 
 } // namespace br
 

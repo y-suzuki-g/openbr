@@ -1390,6 +1390,7 @@ public:
     // and returned.
     virtual cv::Mat evaluate(const cv::Mat &image, const QList<int> &indices = QList<int>()) const = 0;
     virtual int numFeatures() const = 0;
+    virtual cv::Size getSize() const { return cv::Size(0, 0); }
 };
 
 class BR_EXPORT Classifier : public Object
@@ -1401,7 +1402,7 @@ public:
 
     static Classifier *make(QString str, QObject *parent); /*!< \brief Make a classifier from a string. */
     virtual void train(const QList<cv::Mat> &images, const QList<float> &labels) = 0;
-    virtual float classify(const cv::Mat &image, bool returnSum = false) const = 0;
+    virtual float classify(const cv::Mat &image) const = 0;
 };
 
 /*!
