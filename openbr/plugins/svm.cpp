@@ -209,6 +209,114 @@ private:
 
 BR_REGISTER(Transform, SVMTransform)
 
+class SVMClassifier : public Classifier
+{
+    Q_OBJECT
+    Q_ENUMS(Kernel)
+    Q_ENUMS(Type)
+
+    Q_PROPERTY(br::Representation* rep READ get_rep WRITE set_rep RESET reset_rep STORED false)
+    Q_PROPERTY(Kernel kernel READ get_kernel WRITE set_kernel RESET reset_kernel STORED false)
+    Q_PROPERTY(Type type READ get_type WRITE set_type RESET reset_type STORED false)
+    Q_PROPERTY(float C READ get_C WRITE set_C RESET reset_C STORED false)
+    Q_PROPERTY(float gamma READ get_gamma WRITE set_gamma RESET reset_gamma STORED false)
+    Q_PROPERTY(QString inputVariable READ get_inputVariable WRITE set_inputVariable RESET reset_inputVariable STORED false)
+    Q_PROPERTY(QString outputVariable READ get_outputVariable WRITE set_outputVariable RESET reset_outputVariable STORED false)
+    Q_PROPERTY(bool returnDFVal READ get_returnDFVal WRITE set_returnDFVal RESET reset_returnDFVal STORED false)
+    Q_PROPERTY(int termCriteria READ get_termCriteria WRITE set_termCriteria RESET reset_termCriteria STORED false)
+    Q_PROPERTY(int folds READ get_folds WRITE set_folds RESET reset_folds STORED false)
+    Q_PROPERTY(bool balanceFolds READ get_balanceFolds WRITE set_balanceFolds RESET reset_balanceFolds STORED false)
+
+public:
+    enum Kernel { Linear = CvSVM::LINEAR,
+                  Poly = CvSVM::POLY,
+                  RBF = CvSVM::RBF,
+                  Sigmoid = CvSVM::SIGMOID };
+
+    enum Type { C_SVC = CvSVM::C_SVC,
+                NU_SVC = CvSVM::NU_SVC,
+                ONE_CLASS = CvSVM::ONE_CLASS,
+                EPS_SVR = CvSVM::EPS_SVR,
+                NU_SVR = CvSVM::NU_SVR};
+
+private:
+    BR_PROPERTY(br::Representation*, rep, NULL)
+    BR_PROPERTY(Kernel, kernel, Linear)
+    BR_PROPERTY(Type, type, C_SVC)
+    BR_PROPERTY(float, C, -1)
+    BR_PROPERTY(float, gamma, -1)
+    BR_PROPERTY(QString, inputVariable, "Label")
+    BR_PROPERTY(QString, outputVariable, "")
+    BR_PROPERTY(bool, returnDFVal, false)
+    BR_PROPERTY(int, termCriteria, 1000)
+    BR_PROPERTY(int, folds, 5)
+    BR_PROPERTY(bool, balanceFolds, false)
+
+    SVM svm;
+    QHash<QString, int> labelMap;
+    QHash<int, QVariant> reverseLookup;
+    void train(const QList<Mat> &images, const QList<float> &labels)
+    {
+        rep->train(images,labels);
+        QList<Mat> representedImages;
+        foreach(const Mat &image, images)
+            representedImages.append(rep->evaluate(image));
+
+        Mat samples = OpenCVUtils::toMat(representedImages);
+        Mat lab = OpenCVUtils::toMat(labels);
+
+        CvSVMParams params;
+        params.kernel_type = kernel;
+        params.svm_type = type;
+        params.p = 0.1;
+        params.nu = 0.5;
+        params.term_crit = cvTermCriteria(CV_TERMCRIT_ITER+CV_TERMCRIT_EPS, termCriteria, FLT_EPSILON);
+
+        if ((C == -1) || ((gamma == -1) && (kernel == CvSVM::RBF))) {
+            try {
+                svm.train_auto(samples, lab, Mat(), Mat(), params, folds,
+                               CvSVM::get_default_grid(CvSVM::C),
+                               CvSVM::get_default_grid(CvSVM::GAMMA),
+                               CvSVM::get_default_grid(CvSVM::P),
+                               CvSVM::get_default_grid(CvSVM::NU),
+                               CvSVM::get_default_grid(CvSVM::COEF),
+                               CvSVM::get_default_grid(CvSVM::DEGREE),
+                               balanceFolds);
+            } catch (...) {
+                qWarning("Some classes do not contain sufficient examples or are not discriminative enough for accurate SVM classification.");
+                svm.train(samples, lab, Mat(), Mat(), params);
+            }
+        } else {
+            params.C = C;
+            params.gamma = gamma;
+            svm.train(samples, lab, Mat(), Mat(), params);
+        }
+
+        CvSVMParams p = svm.get_params();
+        qDebug("SVM C = %f  Gamma = %f  Support Vectors = %d", p.C, p.gamma, svm.get_support_vector_count());
+    }
+
+    float classify(const Mat &image) const
+    {
+        float prediction = -svm.predict(rep->evaluate(image), returnDFVal);
+        return prediction;
+    }
+
+    void store(QDataStream &stream) const
+    {
+        storeSVM(svm, stream);
+        stream << labelMap << reverseLookup;
+    }
+
+    void load(QDataStream &stream)
+    {
+        loadSVM(svm, stream);
+        stream >> labelMap >> reverseLookup;
+    }
+};
+
+BR_REGISTER(Classifier, SVMClassifier)
+
 /*!
  * \ingroup Distances
  * \brief SVM Regression on template absolute differences.
