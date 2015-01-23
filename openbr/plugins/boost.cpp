@@ -58,7 +58,7 @@ public:
     float classify(const Mat &image) const
     {
         storage->setImage(image, -1, 0);
-        return boost.predict(0);
+        return boost.predict(0, true);
     }
 
     void store(QDataStream &stream) const

@@ -90,7 +90,7 @@ public:
                         int _numSamples,
                         int _precalcValBufSize, int _precalcIdxBufSize,
                         const CascadeBoostParams &_params=CascadeBoostParams() );
-    virtual float predict( int sampleIdx ) const;
+    virtual float predict(int sampleIdx , bool applyThreshold) const;
 
     void freeTrainData() { data->free_train_data(); }
     float getThreshold() const { return threshold; }

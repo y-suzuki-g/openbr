@@ -1266,7 +1266,7 @@ bool CascadeBoost::train( const CascadeDataStorage* _storage,
     return isTrained;
 }
 
-float CascadeBoost::predict( int sampleIdx ) const
+float CascadeBoost::predict( int sampleIdx, bool applyThreshold ) const
 {
     CV_Assert( weak );
     double sum = 0;
@@ -1279,6 +1279,8 @@ float CascadeBoost::predict( int sampleIdx ) const
         CV_READ_SEQ_ELEM( wtree, reader );
         sum += ((CascadeBoostTree*)wtree)->predict(sampleIdx)->value;
     }
+    if (applyThreshold)
+        return (float)sum - threshold;
     return (float)sum;
 }
 
@@ -1539,7 +1541,7 @@ bool CascadeBoost::isErrDesired()
 
     for( int i = 0; i < sampleCount; i++ )
         if( ((CascadeBoostTrainData*)data)->storage->label(i) == 1.0F )
-            responses.append(predict(i));
+            responses.append(predict(i, false));
     sort(responses.begin(), responses.end());
 
     int numPos = responses.size(), numNeg = sampleCount - numPos;
@@ -1549,14 +1551,14 @@ bool CascadeBoost::isErrDesired()
 
     int numTrueAccepts = numPos - thresholdIdx;
     for( int i = thresholdIdx - 1; i >= 0; i--) // add pos values lower than the threshold that have the same response
-        if ( std::abs( responses[i] - threshold) < FLT_EPSILON )
+        if ( responses[i] - threshold > -FLT_EPSILON )
             numTrueAccepts++;
     float TAR = ((float) numTrueAccepts) / ((float) numPos);
 
     int numFalseAccepts = 0;
     for( int i = 0; i < sampleCount; i++ )
         if( ((CascadeBoostTrainData*)data)->storage->label(i) == 0.0F )
-            if( predict(i) > (threshold - FLT_EPSILON))
+            if( predict(i, true) > -FLT_EPSILON)
                 numFalseAccepts++;
     float FAR = ((float) numFalseAccepts) / ((float) numNeg);
 
