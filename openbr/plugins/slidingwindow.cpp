@@ -32,13 +32,184 @@ static float getAspectRatio(const TemplateList &data)
     return tempRatio / (double)ratioCnt;
 }
 
+class SlidingWindowTransform : public Transform
+{
+    Q_OBJECT
+
+    Q_PROPERTY(br::Classifier *classifier READ get_classifier WRITE set_classifier RESET reset_classifier STORED false)
+    Q_PROPERTY(int winWidth READ get_winWidth WRITE set_winWidth RESET reset_winWidth STORED false)
+    Q_PROPERTY(int winHeight READ get_winHeight WRITE set_winHeight RESET reset_winHeight STORED false)
+    Q_PROPERTY(int step READ get_step WRITE set_step RESET reset_step STORED false)
+    Q_PROPERTY(int rounds READ get_rounds WRITE set_rounds RESET reset_rounds STORED false)
+    Q_PROPERTY(int negsPerImage READ get_negsPerImage WRITE set_negsPerImage RESET reset_negsPerImage STORED false)
+    BR_PROPERTY(br::Classifier*, classifier, NULL)
+    BR_PROPERTY(int, winWidth, 24)
+    BR_PROPERTY(int, winHeight, 24)
+    BR_PROPERTY(int, step, 1)
+    BR_PROPERTY(int, rounds, 1)
+    BR_PROPERTY(int, negsPerImage, 5)
+
+public:
+    void train(const TemplateList &data)
+    {
+        QList<Mat> posImages, negImages;
+        foreach (const Template &t, data)
+            if (t.file.get<float>("Label") == 1.0f)
+                posImages.append(t);
+            else
+                negImages.append(t);
+
+        QList<Mat> negSamples = getRandomNegs(negImages);
+
+        QList<float> posLabels = QList<float>::fromVector(QVector<float>(posImages.size(), 1.0f));
+        QList<float> negLabels = QList<float>::fromVector(QVector<float>(negSamples.size(), 0.0f));
+
+        QList<Mat> images = posImages; images.append(negSamples);
+        QList<float> labels = posLabels; labels.append(negLabels);
+        classifier->train(images, labels);
+
+        // bootstrap
+        for (int i = 1; i < rounds; i++) {
+            qDebug() << "\n===== Bootstrapping Round" << i << " =====";
+            negSamples.clear(); // maybe keep some neg samples from the previous round?
+            foreach (const Mat &image, negImages) {
+                int imageNegCount = 0;
+                foreach (const Rect &rect, getRects(image)) {
+                    if (imageNegCount >= negsPerImage)
+                        break;
+                    if (classifier->classify(image(rect)) >= 0.0f) {
+                        negSamples.append(image(rect));
+                        imageNegCount++;
+                    }
+                }
+            }
+            if (negSamples.size() == 0) {
+                qDebug() << "No more negative samples can be pulled from the training data";
+                break;
+            }
+            images = posImages; images.append(negSamples);
+            labels = posLabels; labels.append(QList<float>::fromVector(QVector<float>(negSamples.size(), 0.0f)));
+            classifier->train(images, labels);
+        }
+    }
+
+    void project(const Template &src, Template &dst) const
+    {
+        QList<float> scales = src.file.getList<float>("Scales", QList<float>::fromVector(QVector<float>(src.size(), 1.0f)));
+
+        QList<Rect> posRects;
+        QList<float> confidences;
+        for (int i = 0; i < src.size(); i++) {
+            Mat m = src[i];
+            QList<Rect> rects = getRects(m);
+            foreach (const Rect &rect, rects) {
+                float confidence = classifier->classify(m(rect));
+                if (confidence > 0.0f) {
+                    posRects.append(scaleRect(rect, scales[i]));
+                    confidences.append(confidence);
+                }
+            }
+            dst.append(m);
+        }
+        dst.file.appendRects(posRects);
+        dst.file.setList<float>("Confidences", confidences);
+    }
+
+    void load(QDataStream &stream)
+    {
+        classifier->load(stream);
+    }
+
+    void store(QDataStream &stream) const
+    {
+        classifier->store(stream);
+    }
+
+private:
+    inline Rect scaleRect(const Rect &rect, float scale) const
+    {
+        return Rect(rect.x * scale, rect.y * scale, rect.width * scale, rect.height * scale);
+    }
+
+    QList<Rect> getRects(const Mat &img) const
+    {
+        QList<Rect> rects;
+        for (int x = 0; x < (img.cols - winWidth); x += step)
+            for (int y = 0; y < (img.rows - winHeight); y += step)
+               rects.append(Rect(x, y, winWidth, winHeight));
+        return rects;
+    }
+
+    QList<Mat> getRandomNegs(const QList<Mat> &images) const
+    {
+        QList<Mat> negSamples;
+        foreach (const Mat &image, images) {
+            QList<int> xs = Common::RandSample(negsPerImage, image.cols - winWidth - 1, 0, true);
+            QList<int> ys = Common::RandSample(negsPerImage, image.rows - winHeight - 1, 0, true);
+            for (int i = 0; i < negsPerImage; i++)
+                negSamples.append(image(Rect(xs[i], ys[i], winWidth, winHeight)));
+        }
+        return negSamples;
+    }
+};
+
+class ScaleImageTransform : public UntrainableMetaTransform
+{
+    Q_OBJECT
+
+    Q_PROPERTY(float scaleFactor READ get_scaleFactor WRITE set_scaleFactor RESET reset_scaleFactor STORED false)
+    Q_PROPERTY(int winWidth READ get_winWidth WRITE set_winWidth RESET reset_winWidth STORED false)
+    Q_PROPERTY(int winHeight READ get_winHeight WRITE set_winHeight RESET reset_winHeight STORED false)
+    Q_PROPERTY(int minSize READ get_minSize WRITE set_minSize RESET reset_minSize STORED false)
+    Q_PROPERTY(int maxSize READ get_maxSize WRITE set_maxSize RESET reset_maxSize STORED false)
+    BR_PROPERTY(float, scaleFactor, 1.2)
+    BR_PROPERTY(int, winWidth, 36)
+    BR_PROPERTY(int, winHeight, 36)
+    BR_PROPERTY(int, minSize, 12)
+    BR_PROPERTY(int, maxSize, -1)
+
+    void project(const Template &src, Template &dst) const
+    {
+        dst = src;
+
+        QList<float> scales;
+        foreach (const Mat &m, src) {
+            int imgWidth = m.cols, imgHeight = m.rows;
+
+            int effectiveMaxSize = maxSize;
+            if (effectiveMaxSize < 0) effectiveMaxSize = qMax(imgWidth, imgHeight);
+
+            for (float factor = 1; ; factor *= scaleFactor) {
+                int effectiveWinWidth = winWidth * factor, effectiveWinHeight = winHeight * factor;
+                int scaledImgWidth = imgWidth / factor, scaledImgHeight = imgHeight / factor;
+
+                if (scaledImgWidth < winWidth || scaledImgHeight < winHeight)
+                    break;
+                if (qMax(effectiveWinWidth, effectiveWinHeight) > effectiveMaxSize)
+                    break;
+                if (qMax(effectiveWinWidth, effectiveWinHeight) < minSize)
+                    break;
+
+                Mat scaledImg;
+                resize(m, scaledImg, Size(scaledImgWidth, scaledImgHeight), 0, 0, CV_INTER_LINEAR);
+
+                scales.append(factor);
+                dst.append(scaledImg);
+            }
+        }
+        dst.file.setList<float>("Scales", scales);
+    }
+};
+
+BR_REGISTER(Transform, ScaleImageTransform)
+
 /*!
  * \ingroup transforms
  * \brief Applies a transform to a sliding window.
  *        Discards negative detections.
  * \author Austin Blanton \cite imaus10
  */
-class SlidingWindowTransform : public Transform
+/*class SlidingWindowTransform : public Transform
 {
     Q_OBJECT
     Q_PROPERTY(br::Transform *transform READ get_transform WRITE set_transform RESET reset_transform STORED false)
@@ -128,7 +299,7 @@ private:
         }
         dst.file.setList<float>("Confidences", confidences);
     }
-};
+};*/
 
 BR_REGISTER(Transform, SlidingWindowTransform)
 
@@ -138,7 +309,7 @@ BR_REGISTER(Transform, SlidingWindowTransform)
  *        sampled at multiple scales.
  * \author Josh Klontz \cite jklontz
  */
-class IntegralSlidingWindowTransform : public SlidingWindowTransform
+/*class IntegralSlidingWindowTransform : public SlidingWindowTransform
 {
     Q_OBJECT
 
@@ -151,7 +322,7 @@ class IntegralSlidingWindowTransform : public SlidingWindowTransform
 };
 
 BR_REGISTER(Transform, IntegralSlidingWindowTransform)
-
+*/
 static TemplateList cropTrainingSamples(const TemplateList &data, const float aspectRatio, const int minSize = 32, const float maxOverlap = 0.5, const int negToPosRatio = 1)
 {
     TemplateList result;

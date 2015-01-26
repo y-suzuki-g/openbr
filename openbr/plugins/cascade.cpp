@@ -22,32 +22,33 @@ class CascadeClassifier : public Classifier
 
     QList<Classifier*> stages;
 
-    void train(const QList<Mat> &images, const QList<float> &labels)
+    void train(const QList<Mat> &_images, const QList<float> &_labels)
     {
         if (description.isEmpty())
             qFatal("Need a classifier description!");
 
-        QList<Mat> _images(images); // mutable copy
-        QList<float> _labels(labels); // mutable copy
+        QList<Mat> images(_images); // mutable copy
+        QList<float> labels(_labels); // mutable copy
 
-        int numPos = labels.count(1.0f);
-        int numNeg = (int)labels.size() - numPos;
+        const int numPos = labels.count(1.0f);
+        const int numNeg = (int)labels.size() - numPos;
 
         QDateTime start = QDateTime::currentDateTime();
 
         for (int i = 0; i < numStages; i++) {
-            qDebug() << "\n===== TRAINING" << i << "stage =====";
+            qDebug() << "\n===== TRAINING" << i+1 << "stage =====";
             qDebug() << "<BEGIN";
 
-            if (!updateTrainingSet(_images, _labels, numPos, numNeg))
-                break;
+            printStats(labels, numPos, numNeg);
 
             Classifier *tempStage = Factory<Classifier>::make("." + description);
-            tempStage->train(_images, _labels);
+            tempStage->train(images, labels);
+            stages.append(tempStage);
+
+            if (!updateTrainingSet(images, labels, numNeg))
+                break;
 
             qDebug() << "END>";
-
-            stages.append(tempStage);
 
             // Output training time up till now
             QDateTime now = QDateTime::currentDateTime();
@@ -91,7 +92,20 @@ class CascadeClassifier : public Classifier
     }
 
 private:
-    bool updateTrainingSet(QList<Mat> &images, QList<float> &labels, int numPos, int numNeg)
+    void printStats(QList<float> &labels, int numPos, int numNeg)
+    {
+        float TAR = (float)labels.count(1.0f) / (float)numPos;
+        float FAR = (float)labels.count(0.0f) / (float)numNeg;
+
+        cout << "+----+---------+---------+" << endl;
+        cout << "|  L |  Using  |    %    |" << endl;
+        cout << "+----+---------+---------+" << endl;
+        cout << "| POS|"; cout.width(9); cout << right << labels.count(1.0f) << "|"; cout.width(9); cout << right << TAR << "|" << endl;
+        cout << "| NEG|"; cout.width(9); cout << right << labels.count(0.0f) << "|"; cout.width(9); cout << right << FAR << "|" << endl;
+        cout << "+----+---------+---------+" << endl;
+    }
+
+    bool updateTrainingSet(QList<Mat> &images, QList<float> &labels, int numNeg)
     {
         int passedPos = 0, passedNeg = 0, i = 0;
         while (i < images.size()) {
@@ -106,6 +120,7 @@ private:
 
         if (passedPos == 0 || passedNeg == 0) {
             qDebug("Unable to update training set. Remaining samples: %d POS and %d NEG", passedPos, passedNeg);
+            qDebug() << "END>";
             return false;
         }
 
@@ -113,57 +128,14 @@ private:
 
         if (FAR < maxFAR) {
             qDebug("FAR is belowed desired level. Training is finished!");
+            qDebug() << "END>";
             return false;
         }
-
-        cout << "+----+---------+---------+" << endl;
-        cout << "|  L |  Passed |    %    |" << endl;
-        cout << "+----+---------+---------+" << endl;
-        cout << "| POS|"; cout.width(9); cout << right << passedPos << "|"; cout.width(9); cout << right << (double)passedPos / (double)numPos << "|" << endl;
-        cout << "| NEG|"; cout.width(9); cout << right << passedNeg << "|"; cout.width(9); cout << right << FAR << "|" << endl;
-        cout << "+----+---------+---------+" << endl;
-
         return true;
     }
 };
 
 BR_REGISTER(Classifier, CascadeClassifier)
-
-class CascadeTest : public Transform
-{
-    Q_OBJECT
-    Q_PROPERTY(br::Classifier* classifier READ get_classifier WRITE set_classifier RESET reset_classifier STORED false)
-    BR_PROPERTY(br::Classifier*, classifier, NULL)
-
-    void train(const TemplateList &data)
-    {
-        QList<Mat> images;
-        foreach (const Template &t, data)
-            images.append(t);
-
-        QList<float> labels = File::get<float>(data, "Label");
-
-        classifier->train(images, labels);
-    }
-
-    void project(const Template &src, Template &dst) const
-    {
-        (void)src;
-        (void)dst;
-    }
-
-    void store(QDataStream &stream) const
-    {
-        classifier->store(stream);
-    }
-
-    void load(QDataStream &stream)
-    {
-        classifier->load(stream);
-    }
-};
-
-BR_REGISTER(Transform, CascadeTest)
 
 } // namespace br
 

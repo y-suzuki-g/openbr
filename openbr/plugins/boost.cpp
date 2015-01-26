@@ -43,8 +43,14 @@ public:
 
     void train(const QList<Mat> &images, const QList<float> &labels)
     {
+        foreach (float label, labels)
+            if (!(label == 1.0f || label == 0.0f))
+                qFatal("Labels for boosting must be 1 (POS) or 0 (NEG)");
+
         storage = new CascadeDataStorage(representation, images.size());
         fillStorage(images, labels);
+
+        boost.clear(); // clear old data if necessary
 
         params = CascadeBoostParams(boostType, 0, minTAR, maxFAR, trimRate, maxDepth, maxWeakCount);
         if (!boost.train(storage, images.size(), precalcBufSize, precalcBufSize, params))
