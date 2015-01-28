@@ -47,6 +47,8 @@ public:
             if (!(label == 1.0f || label == 0.0f))
                 qFatal("Labels for boosting must be 1 (POS) or 0 (NEG)");
 
+        representation->train(images, labels);
+
         storage = new CascadeDataStorage(representation, images.size());
         fillStorage(images, labels);
 
@@ -118,9 +120,10 @@ private:
 
     void fillStorage(const QList<Mat> &images, const QList<float> &labels)
     {
-        QFutureSynchronizer<void> sync;
+        //QFutureSynchronizer<void> sync;
         for (int i = 0; i < images.size(); i++) {
-            sync.addFuture(QtConcurrent::run(this, &BoostClassifier::parallelFill, images[i], labels[i], i));
+            //sync.addFuture(QtConcurrent::run(this, &BoostClassifier::parallelFill, images[i], labels[i], i));
+            storage->setImage(images[i], labels[i], i);
             printf("Filled: %d / %d\r", i+1, images.size()); fflush(stdout);
         }
     }

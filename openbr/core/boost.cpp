@@ -210,9 +210,20 @@ void CascadeDataStorage::setImage(const cv::Mat &sample, float label, int idx)
 {
     if (idx > data.rows)
         qFatal("invalid index %d to cascade data of size %d", idx, data.rows);
-    Mat pre = rep->preprocess(sample);
-    Mat flat(1, pre.rows * pre.cols, CV_32FC1, pre.data);
-
+    Mat preprocessed = rep->preprocess(sample);
+    Mat flat;
+    if (preprocessed.channels() == 1)
+        flat = Mat(1, preprocessed.rows * preprocessed.cols, CV_32FC1, preprocessed.data);
+    else {
+        vector<Mat> channels;
+        cv::split(preprocessed, channels);
+        Mat temp((int)channels.size(), preprocessed.rows * preprocessed.cols, CV_32FC1);
+        for (int i = 0; i < (int)channels.size(); i++) {
+            Mat row(1, preprocessed.rows * preprocessed.cols, CV_32FC1, channels[i].data);
+            row.copyTo(temp.row(i));
+        }
+        flat = Mat (1, preprocessed.rows * preprocessed.cols * (int)channels.size(), CV_32FC1, temp.data);
+    }
     flat.copyTo(data.row(idx));
     labels.at<float>(idx) = label;
 }
