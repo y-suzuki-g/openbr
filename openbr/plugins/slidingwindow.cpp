@@ -41,7 +41,6 @@ public:
                 negImages.append(t);
 
         QList<Mat> negSamples = getRandomNegs(negImages);
-        //show(negSamples);
 
         QList<float> posLabels = QList<float>::fromVector(QVector<float>(posImages.size(), 1.0f));
         QList<float> negLabels = QList<float>::fromVector(QVector<float>(negSamples.size(), 0.0f));
@@ -70,8 +69,6 @@ public:
                 break;
             }
 
-            //show(negSamples);
-
             images = posImages; images.append(negSamples);
             labels = posLabels; labels.append(QList<float>::fromVector(QVector<float>(negSamples.size(), 0.0f)));
             classifier->train(images, labels);
@@ -95,7 +92,7 @@ public:
             if (scales[i] == 1 && dst.size() == 0)
                 dst.append(m);
         }
-        dst.file.appendRects(posRects);
+        dst.file.setRects(posRects);
         dst.file.setList<float>("Confidences", confidences);
     }
 
@@ -130,25 +127,6 @@ private:
         }
         rects.append(rect);
         confidences.append(confidence);
-    }
-
-    void show(const QList<Mat> &images, int rowCount = 20) const
-    {
-        Mat all;
-        hconcat(images.mid(0, rowCount).toVector().toStdVector(), all);
-        for (int j = 10; j < images.size(); j += rowCount) {
-            if (j > (images.size() - rowCount)) continue;
-            Mat row;
-            hconcat(images.mid(j, rowCount).toVector().toStdVector(), row);
-            Mat temp;
-            vconcat(all, row, temp);
-            all = temp;
-        }
-        Template t(all);
-        TemplateList tlist, dlist;
-        tlist.append(t);
-        Transform *show = Factory<Transform>::make(".Show");
-        show->project(tlist, dlist);
     }
 
     QList<Rect> getRects(const Mat &img) const
@@ -276,7 +254,6 @@ private:
 
         //Compute overlap between rectangles and create discrete Laplacian matrix
         QList<Rect> rects = OpenCVUtils::toRects(src.file.rects());
-        qDebug() << "src num rects:" << rects.size();
         int n = rects.size();
         if (n == 0)
             return;
@@ -374,7 +351,7 @@ private:
                 consolidatedConfidences.append(confs[i] / cntF);
             }
         }
-        qDebug() << "num consoldiated rects:" << consolidatedRects;
+
         delete [] midX;
         delete [] midY;
         delete [] avgWidth;
@@ -393,12 +370,14 @@ class ExpandDetectionsTransform : public UntrainableTransform
 {
     Q_OBJECT
 
-    void project(const Template &src, Template &dst)
+    void project(const Template &src, Template &dst) const
     {
-
+        TemplateList temp;
+        project(TemplateList() << src, temp);
+        if (!temp.isEmpty()) dst = temp.first();
     }
 
-    void project(const TemplateList &src, TemplateList &dst)
+    void project(const TemplateList &src, TemplateList &dst) const
     {
         foreach (const Template &t, src) {
             if (!t.file.contains("Confidences"))
@@ -410,11 +389,20 @@ class ExpandDetectionsTransform : public UntrainableTransform
             if (confidences.size() != rects.size())
                 qFatal("The number of confidence values differs from the number of rects. Uh oh!");
 
-            for (int i = 0; i < rects.size(); i++)
-
+            for (int i = 0; i < rects.size(); i++) {
+                Template u(t.file);
+                u.file.remove("Confidences");
+                u.file.set("Confidence", confidences[i]);
+                u.file.clearRects();
+                u.file.appendRect(rects[i]);
+                u.file.set("Rect", rects[i]);
+                dst.append(u);
+            }
         }
     }
 };
+
+BR_REGISTER(Transform, ExpandDetectionsTransform)
 
 /*!
  * \ingroup transforms
