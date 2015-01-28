@@ -159,22 +159,13 @@ namespace br
 
 //----------------------------- CascadeBoostParams -------------------------------------------------
 
-CascadeBoostParams::CascadeBoostParams() : minTAR( 0.995F), maxFAR( 0.5F )
-{
-    boost_type = CvBoost::GENTLE;
-    maxCatCount = 0;
-    use_surrogates = use_1se_rule = truncate_pruned_tree = false;
-}
+CascadeBoostParams::CascadeBoostParams() : minTAR( 0.995F), maxFAR( 0.5F ) {}
 
-CascadeBoostParams::CascadeBoostParams( int _boostType, int _maxCatCount, float _minTAR, float _maxFAR,
-                                        double _weightTrimRate, int _maxDepth, int _maxWeakCount ) :
+CascadeBoostParams::CascadeBoostParams(int _boostType, int _maxWeakCount, double _weightTrimRate, int _maxDepth, float _minTAR, float _maxFAR) :
     CvBoostParams( _boostType, _maxWeakCount, _weightTrimRate, _maxDepth, false, 0 )
 {
-    boost_type = CvBoost::GENTLE;
-    maxCatCount = _maxCatCount;
     minTAR = _minTAR;
     maxFAR = _maxFAR;
-    use_surrogates = use_1se_rule = truncate_pruned_tree = false;
 }
 
 void CascadeBoostParams::store(QDataStream &stream) const
@@ -251,29 +242,14 @@ CascadeBoostTrainData::CascadeBoostTrainData( const CascadeDataStorage* _storage
     shared = true;
     set_params( _params );
 
-    const int maxCatCount = ((CascadeBoostParams *)&_params)->maxCatCount;
-
-    max_c_count = MAX( 2, maxCatCount );
+    max_c_count = 2;
     var_type = cvCreateMat( 1, var_count + 2, CV_32SC1 );
-    if ( maxCatCount > 0 )
-    {
-        numPrecalcIdx = 0;
-        cat_var_count = var_count;
-        ord_var_count = 0;
-        for( int vi = 0; vi < var_count; vi++ )
-        {
-            var_type->data.i[vi] = vi;
-        }
-    }
-    else
-    {
-        cat_var_count = 0;
-        ord_var_count = var_count;
-        for( int vi = 1; vi <= var_count; vi++ )
-        {
-            var_type->data.i[vi-1] = -vi;
-        }
-    }
+
+    cat_var_count = 0;
+    ord_var_count = var_count;
+    for( int vi = 1; vi <= var_count; vi++ )
+        var_type->data.i[vi-1] = -vi;
+
     var_type->data.i[var_count] = cat_var_count;
     var_type->data.i[var_count+1] = cat_var_count+1;
 
@@ -309,12 +285,10 @@ CascadeBoostTrainData::CascadeBoostTrainData( const CascadeDataStorage* _storage
 
     CV_Assert( _storage );
     storage = _storage;
-    const int maxCatCount = ((CascadeBoostParams *)&_params)->maxCatCount;
 
-    max_c_count = MAX( 2, maxCatCount );
+    max_c_count = 2;
     _resp = storage->labels;
     responses = &_resp;
-    // TODO: check responses: elements must be 0 or 1
 
     if( _precalcValBufSize < 0 || _precalcIdxBufSize < 0)
         CV_Error( CV_StsOutOfRange, "_numPrecalcVal and _numPrecalcIdx must be positive or 0" );
@@ -334,25 +308,12 @@ CascadeBoostTrainData::CascadeBoostTrainData( const CascadeDataStorage* _storage
 
     valCache.create( numPrecalcVal, sample_count, CV_32FC1 );
     var_type = cvCreateMat( 1, var_count + 2, CV_32SC1 );
-    if ( maxCatCount > 0 )
-    {
-        numPrecalcIdx = 0;
-        cat_var_count = var_count;
-        ord_var_count = 0;
-        for( int vi = 0; vi < var_count; vi++ )
-        {
-            var_type->data.i[vi] = vi;
-        }
-    }
-    else
-    {
-        cat_var_count = 0;
-        ord_var_count = var_count;
-        for( int vi = 1; vi <= var_count; vi++ )
-        {
-            var_type->data.i[vi-1] = -vi;
-        }
-    }
+
+    cat_var_count = 0;
+    ord_var_count = var_count;
+    for( int vi = 1; vi <= var_count; vi++ )
+        var_type->data.i[vi-1] = -vi;
+
     var_type->data.i[var_count] = cat_var_count;
     var_type->data.i[var_count+1] = cat_var_count+1;
     work_var_count = ( cat_var_count ? 0 : numPrecalcIdx ) + 1/*cv_lables*/;
@@ -843,163 +804,83 @@ void CascadeBoostTrainData::precalculate()
 
 //-------------------------------- CascadeBoostTree ----------------------------------------
 
-CvDTreeNode* CascadeBoostTree::predict( int sampleIdx ) const
+static void buildSimpleTree( CascadeBoostNode *node, CvDTreeNode *other_node )
 {
-    CvDTreeNode* node = root;
-    if( !node )
-        CV_Error( CV_StsError, "The tree has not been trained yet" );
+    node->value = other_node->value;
+    node->hasChildren = (other_node->left ? true : false);
+    if (node->hasChildren) {
+        node->feature_idx = other_node->split->var_idx;
+        node->threshold = other_node->split->ord.c;
 
-    if ( maxCatCount == 0 ) // ordered
-    {
-        while( node->left )
-        {
-            CvDTreeSplit* split = node->split;
-            float val = ((CascadeBoostTrainData*)data)->getVarValue( split->var_idx, sampleIdx );
-            node = val <= split->ord.c ? node->left : node->right;
-        }
+        node->left = new CascadeBoostNode, node->right = new CascadeBoostNode;
+        buildSimpleTree(node->left, other_node->left);
+        buildSimpleTree(node->right, other_node->right);
     }
-    else // categorical
-    {
-        while( node->left )
-        {
-            CvDTreeSplit* split = node->split;
-            int c = (int)((CascadeBoostTrainData*)data)->getVarValue( split->var_idx, sampleIdx );
-            node = CV_DTREE_CAT_DIR(c, split->subset) < 0 ? node->left : node->right;
-        }
-    }
-    return node;
 }
 
-void CascadeBoostTree::write( FileStorage &fs )
+bool CascadeBoostTree::train(CvDTreeTrainData *trainData, const CvMat *subsample_idx,
+                                CvBoost *ensemble)
 {
-    int subsetN = (maxCatCount + 31)/32;
-    queue<CvDTreeNode*> internalNodesQueue;
-    int size = (int)pow( 2.f, (float)ensemble->get_params().max_depth);
-    Ptr<float> leafVals = new float[size];
-    int leafValIdx = 0;
-    int internalNodeIdx = 1;
-    CvDTreeNode* tempNode;
+    if (!CvBoostTree::train( trainData, subsample_idx, ensemble ))
+        return false;
 
-    CV_DbgAssert( root );
-    internalNodesQueue.push( root );
+    simple_root = new CascadeBoostNode;
+    buildSimpleTree(simple_root, root);
+    free_tree(); // releases unneeded root
 
-    fs << "{";
-    fs << CC_INTERNAL_NODES << "[:";
-    while (!internalNodesQueue.empty())
-    {
-        tempNode = internalNodesQueue.front();
-        CV_Assert( tempNode->left );
-        if ( !tempNode->left->left && !tempNode->left->right) // left node is leaf
-        {
-            leafVals[-leafValIdx] = (float)tempNode->left->value;
-            fs << leafValIdx-- ;
-        }
-        else
-        {
-            internalNodesQueue.push( tempNode->left );
-            fs << internalNodeIdx++;
-        }
-        CV_Assert( tempNode->right );
-        if ( !tempNode->right->left && !tempNode->right->right) // right node is leaf
-        {
-            leafVals[-leafValIdx] = (float)tempNode->right->value;
-            fs << leafValIdx--;
-        }
-        else
-        {
-            internalNodesQueue.push( tempNode->right );
-            fs << internalNodeIdx++;
-        }
-        int fidx = tempNode->split->var_idx;
-        fs << fidx;
-        if ( !maxCatCount )
-            fs << tempNode->split->ord.c;
-        else
-            for( int i = 0; i < subsetN; i++ )
-                fs << tempNode->split->subset[i];
-        internalNodesQueue.pop();
-    }
-    fs << "]"; // CC_INTERNAL_NODES
-
-    fs << CC_LEAF_VALUES << "[:";
-    for (int ni = 0; ni < -leafValIdx; ni++)
-        fs << leafVals[ni];
-    fs << "]"; // CC_LEAF_VALUES
-    fs << "}";
+    return true;
 }
 
-void CascadeBoostTree::read( const FileNode &node, CvBoost* _ensemble,
-                                CvDTreeTrainData* _data )
+float CascadeBoostTree::predict( int sampleIdx ) const
 {
-    int subsetN = (maxCatCount + 31)/32;
-    int step = 3 + ( maxCatCount>0 ? subsetN : 1 );
+    CascadeBoostNode *node = simple_root;
+    if ( !node )
+        CV_Error( CV_StsError, "tree has not been trained yet" );
 
-    queue<CvDTreeNode*> internalNodesQueue;
-    FileNodeIterator internalNodesIt, leafValsuesIt;
-    CvDTreeNode* prntNode, *cldNode;
+    while ( node->hasChildren )
+    {
+        float val = ((CascadeBoostTrainData*)data)->getVarValue( node->feature_idx, sampleIdx );
+        node = val <= node->threshold ? node->left : node->right;
+    }
+    return node->value;
+}
 
-    clear();
+static void storeNodeRecursive( CascadeBoostNode *node, QDataStream &stream )
+{
+    stream << node->value;
+    stream << node->hasChildren; // has children
+    if (node->hasChildren) {
+        stream << node->feature_idx;
+        stream << node->threshold;
+        storeNodeRecursive(node->left, stream);
+        storeNodeRecursive(node->right, stream);
+    }
+}
+
+void CascadeBoostTree::store( QDataStream &stream ) const
+{
+    storeNodeRecursive( simple_root, stream );
+}
+
+static void loadNodeRecursive( CascadeBoostNode *node, QDataStream &stream)
+{
+    stream >> node->value;
+    stream >> node->hasChildren;
+    if (node->hasChildren) {
+        stream >> node->feature_idx;
+        stream >> node->threshold;
+
+        node->left = new CascadeBoostNode, node->right = new CascadeBoostNode;
+        loadNodeRecursive(node->left, stream);
+        loadNodeRecursive(node->right, stream);
+    }
+}
+
+void CascadeBoostTree::load( CvDTreeTrainData *_data, QDataStream &stream )
+{
     data = _data;
-    ensemble = _ensemble;
-    pruned_tree_idx = 0;
-
-    // read tree nodes
-    FileNode rnode = node[CC_INTERNAL_NODES];
-    internalNodesIt = rnode.end();
-    leafValsuesIt = node[CC_LEAF_VALUES].end();
-    internalNodesIt--; leafValsuesIt--;
-    for( size_t i = 0; i < rnode.size()/step; i++ )
-    {
-        prntNode = data->new_node( 0, 0, 0, 0 );
-        if ( maxCatCount > 0 )
-        {
-            prntNode->split = data->new_split_cat( 0, 0 );
-            for( int j = subsetN-1; j>=0; j--)
-            {
-                *internalNodesIt >> prntNode->split->subset[j]; internalNodesIt--;
-            }
-        }
-        else
-        {
-            float split_value;
-            *internalNodesIt >> split_value; internalNodesIt--;
-            prntNode->split = data->new_split_ord( 0, split_value, 0, 0, 0);
-        }
-        *internalNodesIt >> prntNode->split->var_idx; internalNodesIt--;
-        int ridx, lidx;
-        *internalNodesIt >> ridx; internalNodesIt--;
-        *internalNodesIt >> lidx;internalNodesIt--;
-        if ( ridx <= 0)
-        {
-            prntNode->right = cldNode = data->new_node( 0, 0, 0, 0 );
-            *leafValsuesIt >> cldNode->value; leafValsuesIt--;
-            cldNode->parent = prntNode;
-        }
-        else
-        {
-            prntNode->right = internalNodesQueue.front();
-            prntNode->right->parent = prntNode;
-            internalNodesQueue.pop();
-        }
-
-        if ( lidx <= 0)
-        {
-            prntNode->left = cldNode = data->new_node( 0, 0, 0, 0 );
-            *leafValsuesIt >> cldNode->value; leafValsuesIt--;
-            cldNode->parent = prntNode;
-        }
-        else
-        {
-            prntNode->left = internalNodesQueue.front();
-            prntNode->left->parent = prntNode;
-            internalNodesQueue.pop();
-        }
-
-        internalNodesQueue.push( prntNode );
-    }
-
-    root = internalNodesQueue.front();
-    internalNodesQueue.pop();
+    simple_root = new CascadeBoostNode;
+    loadNodeRecursive( simple_root, stream );
 }
 
 void CascadeBoostTree::split_node_data( CvDTreeNode* node )
@@ -1220,6 +1101,22 @@ void CascadeBoostTree::split_node_data( CvDTreeNode* node )
     data->free_node_data(node);
 }
 
+static void freeNodeRecursive( CascadeBoostNode *node )
+{
+    if (node->hasChildren) {
+        freeNodeRecursive(node->left);
+        freeNodeRecursive(node->right);
+        delete node->left;
+        delete node->right;
+    }
+    delete node;
+}
+
+void CascadeBoostTree::freeTree()
+{
+    freeNodeRecursive(simple_root);
+}
+
 //----------------------------------- CascadeBoost --------------------------------------
 
 bool CascadeBoost::train( const CascadeDataStorage* _storage,
@@ -1250,7 +1147,7 @@ bool CascadeBoost::train( const CascadeDataStorage* _storage,
 
     do
     {
-        CascadeBoostTree* tree = new CascadeBoostTree(_params.maxCatCount);
+        CascadeBoostTree* tree = new CascadeBoostTree;
         if( !tree->train( data, subsample_mask, this ) )
         {
             delete tree;
@@ -1260,6 +1157,7 @@ bool CascadeBoost::train( const CascadeDataStorage* _storage,
         cvSeqPush( weak, &tree );
         update_weights( tree );
         trim_weights();
+
         if( cvCountNonZero(subsample_mask) == 0 )
             break;
     }
@@ -1288,7 +1186,7 @@ float CascadeBoost::predict( int sampleIdx, bool applyThreshold ) const
     {
         CvBoostTree* wtree;
         CV_READ_SEQ_ELEM( wtree, reader );
-        sum += ((CascadeBoostTree*)wtree)->predict(sampleIdx)->value;
+        sum += ((CascadeBoostTree*)wtree)->predict(sampleIdx);
     }
     if (applyThreshold)
         return (float)sum - threshold;
@@ -1414,9 +1312,7 @@ void CascadeBoost::update_weights( CvBoostTree* tree )
             // run tree through all the non-processed samples
             for( int i = 0; i < n; i++ )
                 if( subsample_mask->data.ptr[i] )
-                {
-                    weak_eval->data.db[i] = ((CascadeBoostTree*)tree)->predict( i )->value;
-                }
+                    weak_eval->data.db[i] = ((CascadeBoostTree*)tree)->predict( i );
         }
 
         // now update weights and other parameters for each type of boosting
@@ -1582,55 +1478,40 @@ bool CascadeBoost::isErrDesired()
     return FAR <= maxFAR;
 }
 
-void CascadeBoost::save(const char *filename) const
+void CascadeBoost::freeTrees()
 {
-    FileStorage fs(filename, FileStorage::WRITE);
-    write( fs );
-}
-
-void CascadeBoost::write( FileStorage &fs ) const
-{
-    CascadeBoostTree* weakTree;
-    fs << CC_BOOST << "{";
-    fs << CC_WEAK_COUNT << weak->total;
-    fs << CC_STAGE_THRESHOLD << threshold;
-    fs << CC_WEAK_CLASSIFIERS << "[";
-    for( int wi = 0; wi < weak->total; wi++)
-    {
-        weakTree = *((CascadeBoostTree**) cvGetSeqElem( weak, wi ));
-        weakTree->write( fs );
+    for (int i = 0; i < weak->total; i++) {
+        CascadeBoostTree *weakTree = *((CascadeBoostTree**) cvGetSeqElem( weak, i ));
+        weakTree->freeTree();
     }
-    fs << "]";
-    fs << "}";
 }
 
-void CascadeBoost::load(const char *filename, const CascadeDataStorage *_storage, const CascadeBoostParams &_params)
+void CascadeBoost::store( QDataStream &stream ) const
 {
-    FileStorage fs(filename, FileStorage::READ);
-    FileNode root = fs.getFirstTopLevelNode();
-    read( root, _storage, _params );
-    fs.release();
+    stream << weak->total;
+    stream << threshold;
+    for (int i = 0; i < weak->total; i++) {
+        CascadeBoostTree *weakTree = *((CascadeBoostTree**) cvGetSeqElem( weak, i ));
+        weakTree->store( stream );
+    }
 }
 
-bool CascadeBoost::read( const FileNode &node, const CascadeDataStorage* _storage, const CascadeBoostParams& _params )
+void CascadeBoost::load( const CascadeDataStorage *_storage, CascadeBoostParams &_params, QDataStream &stream )
 {
-    CvMemStorage* memStorage;
     clear();
     data = new CascadeBoostTrainData( _storage, _params );
     set_params( _params );
 
-    node[CC_STAGE_THRESHOLD] >> threshold;
-    FileNode rnode = node[CC_WEAK_CLASSIFIERS];
+    stream >> weak->total;
+    stream >> threshold;
 
-    memStorage = cvCreateMemStorage();
+    CvMemStorage *memStorage = cvCreateMemStorage();
     weak = cvCreateSeq( 0, sizeof(CvSeq), sizeof(CvBoostTree*), memStorage );
-    for( FileNodeIterator it = rnode.begin(); it != rnode.end(); it++ )
-    {
-        CascadeBoostTree* tree = new CascadeBoostTree();
-        tree->read( *it, this, data );
-        cvSeqPush( weak, &tree );
+    for (int i = 0; i < weak->total; i++) {
+        CascadeBoostTree *tree = new CascadeBoostTree;
+        tree->load( data, stream );
+        cvSeqPush( weak, tree );
     }
-    return true;
 }
 
 }

@@ -27,13 +27,11 @@ struct CascadeDataStorage
 
 struct CascadeBoostParams : CvBoostParams
 {
-    int maxCatCount;
     float minTAR;
     float maxFAR;
 
     CascadeBoostParams();
-    CascadeBoostParams( int _boostType, int _maxCatCount, float _minTAR, float _maxFAR,
-                          double _weightTrimRate, int _maxDepth, int _maxWeakCount );
+    CascadeBoostParams(int _boostType, int _maxWeakCount, double _weightTrimRate, int _maxDepth, float _minTAR, float _maxFAR );
     virtual ~CascadeBoostParams() {}
     void store(QDataStream &stream) const;
     void load(QDataStream &stream);
@@ -66,21 +64,33 @@ struct CascadeBoostTrainData : CvDTreeTrainData
     int numPrecalcVal, numPrecalcIdx;
 };
 
+struct CascadeBoostNode
+{
+    float threshold;
+    int feature_idx;
+    float value;
+    bool hasChildren;
+
+    CascadeBoostNode *left;
+    CascadeBoostNode *right;
+};
+
 class CascadeBoostTree : public CvBoostTree
 {
 public:
-    CascadeBoostTree() : maxCatCount(0) {}
-    CascadeBoostTree(int _maxCatCount) : maxCatCount(_maxCatCount) {}
+    virtual bool train( CvDTreeTrainData* trainData,
+                        const CvMat* subsample_idx, CvBoost* ensemble );
+    virtual float predict( int sampleIdx ) const;
 
-    virtual CvDTreeNode* predict( int sampleIdx ) const;
+    void store( QDataStream &stream ) const;
+    void load( CvDTreeTrainData *_data, QDataStream &stream );
 
-    void write(cv::FileStorage &fs);
-    void read( const cv::FileNode &node, CvBoost* _ensemble, CvDTreeTrainData* _data );
+    void freeTree();
 
 protected:
     virtual void split_node_data( CvDTreeNode* n );
 
-    int maxCatCount;
+    CascadeBoostNode *simple_root;
 };
 
 class CascadeBoost : public CvBoost
@@ -93,13 +103,11 @@ public:
     virtual float predict(int sampleIdx , bool applyThreshold) const;
 
     void freeTrainData() { data->free_train_data(); }
+    void freeTrees();
     float getThreshold() const { return threshold; }
 
-    void save( const char *filename ) const;
-    void write( cv::FileStorage &fs ) const;
-    void load( const char *filename, const CascadeDataStorage *_storage, const CascadeBoostParams &_params);
-    bool read( const cv::FileNode &node, const CascadeDataStorage* _storage,
-               const CascadeBoostParams& _params );
+    void store( QDataStream &stream ) const;
+    void load( const CascadeDataStorage *_storage, CascadeBoostParams &_params, QDataStream &stream );
 
 protected:
     virtual bool set_params( const CvBoostParams& _params );
