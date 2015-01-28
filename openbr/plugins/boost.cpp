@@ -54,7 +54,7 @@ public:
 
         boost.clear(); // clear old data if necessary
 
-        params = CascadeBoostParams(boostType, 0, minTAR, maxFAR, trimRate, maxDepth, maxWeakCount);
+        params = CascadeBoostParams(boostType, maxWeakCount, trimRate, maxDepth, minTAR, maxFAR);
         if (!boost.train(storage, images.size(), precalcBufSize, precalcBufSize, params))
             qFatal("Unable to train Boosted Classifier");    
 
@@ -72,44 +72,20 @@ public:
     void store(QDataStream &stream) const
     {
         params.store(stream);
-
-        // Create local file
-        QTemporaryFile tempFile;
-        tempFile.open();
-        tempFile.close();
-
-        // Save MLP to local file
-        boost.save(qPrintable(tempFile.fileName()));
-
-        // Copy local file contents to stream
-        tempFile.open();
-        QByteArray data = tempFile.readAll();
-        tempFile.close();
-        stream << data;
+        boost.store(stream);
     }
 
     void load(QDataStream &stream)
     {
         params.load(stream);
         storage = new CascadeDataStorage(representation, 1);
-
-        // Copy local file contents from stream
-        QByteArray data;
-        stream >> data;
-
-        // Create local file
-        QTemporaryFile tempFile;
-        tempFile.open();
-        tempFile.write(data);
-        tempFile.close();
-
-        // Load MLP from local file
-        boost.load(qPrintable(tempFile.fileName()), storage, params);
+        boost.load(storage, params, stream);
     }
 
     void finalize()
     {
         delete storage;
+        boost.freeTrees();
     }
 
 private:

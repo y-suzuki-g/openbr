@@ -36,7 +36,7 @@ class CascadeClassifier : public Classifier
         QDateTime start = QDateTime::currentDateTime();
 
         for (int i = 0; i < numStages; i++) {
-            qDebug() << "\n===== TRAINING STAGE " << i+1 << " =====";
+            qDebug() << "\n===== TRAINING STAGE" << i+1 << "=====";
             qDebug() << "<BEGIN";
 
             printStats(labels, numPos, numNeg);
