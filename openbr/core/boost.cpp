@@ -1131,10 +1131,6 @@ bool CascadeBoost::train( const CascadeDataStorage* _storage,
     data = new CascadeBoostTrainData( _storage, _numSamples,
                                         _precalcValBufSize, _precalcIdxBufSize, _params );
 
-    CvMemStorage *memStorage = cvCreateMemStorage();
-    weak = cvCreateSeq( 0, sizeof(CvSeq), sizeof(CvBoostTree*), memStorage );
-    memStorage = 0;
-
     set_params( _params );
     if ( (_params.boost_type == LOGIT) || (_params.boost_type == GENTLE) )
         data->do_responses_copy();
@@ -1154,16 +1150,16 @@ bool CascadeBoost::train( const CascadeDataStorage* _storage,
             break;
         }
 
-        cvSeqPush( weak, &tree );
+        classifiers.append(tree);
         update_weights( tree );
         trim_weights();
 
         if( cvCountNonZero(subsample_mask) == 0 )
             break;
     }
-    while( !isErrDesired() && (weak->total < params.weak_count) );
+    while( !isErrDesired() && (classifiers.size() < params.weak_count) );
 
-    if(weak->total > 0)
+    if(classifiers.empty())
     {
         data->is_classifier = true;
         data->free_train_data();
@@ -1177,17 +1173,10 @@ bool CascadeBoost::train( const CascadeDataStorage* _storage,
 
 float CascadeBoost::predict( int sampleIdx, bool applyThreshold ) const
 {
-    CV_Assert( weak );
     double sum = 0;
-    CvSeqReader reader;
-    cvStartReadSeq( weak, &reader );
-    cvSetSeqReaderPos( &reader, 0 );
-    for( int i = 0; i < weak->total; i++ )
-    {
-        CvBoostTree* wtree;
-        CV_READ_SEQ_ELEM( wtree, reader );
-        sum += ((CascadeBoostTree*)wtree)->predict(sampleIdx);
-    }
+    foreach (const CascadeBoostTree *classifier, classifiers)
+        sum += classifier->predict(sampleIdx);
+
     if (applyThreshold)
         return (float)sum - threshold;
     return (float)sum;
@@ -1469,7 +1458,7 @@ bool CascadeBoost::isErrDesired()
                 numFalseAccepts++;
     float FAR = ((float) numFalseAccepts) / ((float) numNeg);
 
-    cout << "|"; cout.width(4); cout << right << weak->total;
+    cout << "|"; cout.width(4); cout << right << classifiers.size();
     cout << "|"; cout.width(9); cout << right << TAR;
     cout << "|"; cout.width(9); cout << right << FAR;
     cout << "|" << endl;
@@ -1480,37 +1469,35 @@ bool CascadeBoost::isErrDesired()
 
 void CascadeBoost::freeTrees()
 {
-    for (int i = 0; i < weak->total; i++) {
-        CascadeBoostTree *weakTree = *((CascadeBoostTree**) cvGetSeqElem( weak, i ));
-        weakTree->freeTree();
-    }
+    for (int i = 0; i < classifiers.size(); i++)
+        classifiers[i]->freeTree();
 }
 
 void CascadeBoost::store( QDataStream &stream ) const
 {
-    stream << weak->total;
+    stream << classifiers.size();
     stream << threshold;
-    for (int i = 0; i < weak->total; i++) {
-        CascadeBoostTree *weakTree = *((CascadeBoostTree**) cvGetSeqElem( weak, i ));
-        weakTree->store( stream );
-    }
+    foreach (const CascadeBoostTree *classifier, classifiers)
+        classifier->store(stream);
 }
 
 void CascadeBoost::load( const CascadeDataStorage *_storage, CascadeBoostParams &_params, QDataStream &stream )
 {
+    // clear old data
     clear();
+    classifiers.clear();
+
     data = new CascadeBoostTrainData( _storage, _params );
     set_params( _params );
 
-    stream >> weak->total;
+    int numTrees;
+    stream >> numTrees;
     stream >> threshold;
 
-    CvMemStorage *memStorage = cvCreateMemStorage();
-    weak = cvCreateSeq( 0, sizeof(CvSeq), sizeof(CvBoostTree*), memStorage );
-    for (int i = 0; i < weak->total; i++) {
-        CascadeBoostTree *tree = new CascadeBoostTree;
-        tree->load( data, stream );
-        cvSeqPush( weak, tree );
+    for (int i = 0; i < numTrees; i++) {
+        CascadeBoostTree *classifier = new CascadeBoostTree;
+        classifier->load( data, stream );
+        classifiers.append(classifier);
     }
 }
 

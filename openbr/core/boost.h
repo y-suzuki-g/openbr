@@ -114,6 +114,7 @@ protected:
     virtual void update_weights( CvBoostTree* tree );
     virtual bool isErrDesired();
 
+    QList<CascadeBoostTree *> classifiers;
     float threshold;
     float minTAR, maxFAR;
 };

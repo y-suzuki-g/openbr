@@ -13,7 +13,7 @@ using namespace Eigen;
 namespace br
 {
 
-class SlidingWindowTransform : public Transform
+class SlidingWindowTransform : public MetaTransform
 {
     Q_OBJECT
 
@@ -77,23 +77,40 @@ public:
 
     void project(const Template &src, Template &dst) const
     {
-        QList<float> scales = src.file.getList<float>("Scales", QList<float>::fromVector(QVector<float>(src.size(), 1.0f)));
+        TemplateList temp;
+        project(TemplateList() << src, temp);
+        if (!temp.isEmpty()) dst = temp.first();
+    }
 
-        QList<Rect> posRects;
-        QList<float> confidences;
-        for (int i = 0; i < src.size(); i++) {
-            Mat m = src[i];
-            QList<Rect> rects = getRects(m);
-            foreach (const Rect &rect, rects) {
-                float confidence = classifier->classify(m(rect));
-                if (confidence > 0.0f)
-                    smartAddRect(posRects, confidences, scaleRect(rect, scales[i]), confidence);
+    void project(const TemplateList &src, TemplateList &dst) const
+    {
+        foreach (const Template &t, src) {
+            QList<float> scales = t.file.getList<float>("Scales", QList<float>::fromVector(QVector<float>(t.size(), 1.0f)));
+
+            QList<Rect> detections;
+            QList<float> confidences;
+            Mat orig;
+            for (int i = 0; i < t.size(); i++) {
+                Mat m = t[i];
+
+                QList<Rect> rects = getRects(m);
+                foreach (const Rect &rect, rects) {
+                    float confidence = classifier->classify(m(rect));
+                    if (confidence > 0.0f)
+                        smartAddRect(detections, confidences, scaleRect(rect, scales[i]), confidence);
+                }
+                if (scales[i] == 1 && dst.size() == 0)
+                    orig = m;
             }
-            if (scales[i] == 1 && dst.size() == 0)
-                dst.append(m);
+
+            for (int i = 0; i < detections.size(); i++) {
+                Template u(t.file, orig);
+                u.file.set("Confidence", confidences[i]);
+                u.file.appendRect(detections[i]);
+                u.file.set("Rect", OpenCVUtils::fromRect(detections[i]));
+                dst.append(u);
+            }
         }
-        dst.file.setRects(posRects);
-        dst.file.setList<float>("Confidences", confidences);
     }
 
     void load(QDataStream &stream)
