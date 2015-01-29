@@ -1159,7 +1159,7 @@ bool CascadeBoost::train( const CascadeDataStorage* _storage,
     }
     while( !isErrDesired() && (classifiers.size() < params.weak_count) );
 
-    if(classifiers.empty())
+    if(!classifiers.empty())
     {
         data->is_classifier = true;
         data->free_train_data();
