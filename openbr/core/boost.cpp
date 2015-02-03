@@ -201,7 +201,9 @@ void CascadeDataStorage::setImage(const cv::Mat &sample, float label, int idx)
 {
     if (idx > data.rows)
         qFatal("invalid index %d to cascade data of size %d", idx, data.rows);
+
     Mat preprocessed = rep->preprocess(sample);
+
     Mat flat;
     if (preprocessed.channels() == 1)
         flat = Mat(1, preprocessed.rows * preprocessed.cols, CV_32FC1, preprocessed.data);
@@ -303,7 +305,6 @@ CascadeBoostTrainData::CascadeBoostTrainData( const CascadeDataStorage* _storage
     numPrecalcVal = min( cvRound((double)_precalcValBufSize*1048576. / (sizeof(float)*sample_count)), var_count );
     numPrecalcIdx = min( cvRound((double)_precalcIdxBufSize*1048576. /
                 ((is_buf_16u ? sizeof(unsigned short) : sizeof (int))*sample_count)), var_count );
-
     assert( numPrecalcIdx >= 0 && numPrecalcVal >= 0 );
 
     valCache.create( numPrecalcVal, sample_count, CV_32FC1 );
@@ -1124,7 +1125,6 @@ bool CascadeBoost::train( const CascadeDataStorage* _storage,
                            int _precalcValBufSize, int _precalcIdxBufSize,
                            const CascadeBoostParams& _params )
 {
-    bool isTrained = false;
     CV_Assert( !data );
     clear();
 
@@ -1159,16 +1159,14 @@ bool CascadeBoost::train( const CascadeDataStorage* _storage,
     }
     while( !isErrDesired() && (classifiers.size() < params.weak_count) );
 
-    if(!classifiers.empty())
-    {
-        data->is_classifier = true;
-        data->free_train_data();
-        isTrained = true;
-    }
-    else
+    if(classifiers.empty()) {
         clear();
+        return false;
+    }
 
-    return isTrained;
+    data->is_classifier = true;
+    data->free_train_data();
+    return true;
 }
 
 float CascadeBoost::predict( int sampleIdx, bool applyThreshold ) const
