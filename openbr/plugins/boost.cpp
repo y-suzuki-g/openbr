@@ -30,7 +30,7 @@ public:
     Q_PROPERTY(int maxWeakCount READ get_maxWeakCount WRITE set_maxWeakCount RESET reset_maxWeakCount STORED false)
     BR_PROPERTY(br::Representation*, representation, NULL)
     BR_PROPERTY(Type, boostType, Gentle)
-    BR_PROPERTY(int, precalcBufSize, 1024)
+    BR_PROPERTY(int, precalcBufSize, 512)
     BR_PROPERTY(float, minTAR, 0.995)
     BR_PROPERTY(float, maxFAR, 0.5)
     BR_PROPERTY(float, trimRate, 0.95)
