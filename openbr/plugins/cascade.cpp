@@ -66,7 +66,7 @@ class CascadeClassifier : public Classifier
 
     float classify(const Mat &image) const
     {
-        float val = 0.;
+        float val;
         for (int i = 0; i < stages.size(); i++)
             if ((val = stages[i]->classify(image)) < 0.0f)
                 return val;
