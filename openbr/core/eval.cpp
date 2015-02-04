@@ -18,6 +18,7 @@
 #include "eval.h"
 #include "openbr/core/common.h"
 #include "openbr/core/qtutils.h"
+#include "openbr/core/opencvutils.h"
 #include <QMapIterator>
 
 using namespace cv;
@@ -36,7 +37,12 @@ struct Comparison
     Comparison() {}
     Comparison(float _score, int _target, int _query, bool _genuine)
         : score(_score), target(_target), query(_query), genuine(_genuine) {}
-    inline bool operator<(const Comparison &other) const { return score > other.score; }
+
+    inline bool operator<(const Comparison &other) const
+    {
+        if (score != other.score) return (score > other.score);
+        else                      return !genuine && other.genuine; // Tie-break favors pessimistic behavior of ranking impostors higher.
+    }
 };
 
 #undef FAR // Windows preprecessor definition conflicts with variable name
@@ -48,7 +54,7 @@ struct OperatingPoint
         : score(_score), FAR(_FAR), TAR(_TAR) {}
 };
 
-static OperatingPoint getOperatingPoint(const QList<OperatingPoint> &operatingPoints, float FAR)
+static OperatingPoint getOperatingPointGivenFAR(const QList<OperatingPoint> &operatingPoints, float FAR)
 {
     int index = 0;
     while (operatingPoints[index].FAR < FAR) {
@@ -69,6 +75,32 @@ static OperatingPoint getOperatingPoint(const QList<OperatingPoint> &operatingPo
     const float bScore = score1 - mScore*FAR1;
     return OperatingPoint(mScore * FAR + bScore,FAR, mTAR * FAR + bTAR);
 }
+
+static OperatingPoint getOperatingPointGivenTAR(const QList<OperatingPoint> &operatingPoints, float TAR)
+{
+    int index = 0;
+    while (operatingPoints[index].TAR < TAR) {
+      index++;
+      if (index == operatingPoints.size())
+            return OperatingPoint(operatingPoints.last().score, operatingPoints.last().FAR, TAR);
+    }
+
+
+    const float FAR1 = (index == 0 ? 0 : operatingPoints[index-1].FAR);
+    const float TAR1 = (index == 0 ? 0 : operatingPoints[index-1].TAR);
+    const float score1 = (index == 0 ? operatingPoints[index].score : operatingPoints[index-1].score);
+    const float FAR2 = operatingPoints[index].FAR;
+    const float TAR2 = operatingPoints[index].TAR;
+    const float score2 = operatingPoints[index].score;
+    const float mTAR = (TAR2 - TAR1) / (FAR2 - FAR1);
+    const float bTAR = TAR1 - mTAR*FAR1;
+    const float mScore = (score2 - score1) / (FAR2 - FAR1);
+    const float bScore = score1 - mScore*FAR1;
+
+    const float FAR = (TAR - bTAR) / mTAR;
+    return OperatingPoint(mScore * FAR + bScore,FAR, TAR);
+}
+
 
 static float getCMC(const QVector<int> &firstGenuineReturns, int rank)
 {
@@ -183,7 +215,7 @@ float Evaluate(const Mat &simmat, const Mat &mask, const QString &csv, const QSt
     if (impostorCount == 0) qFatal("No impostor scores!");
 
     // Sort comparisons by simmat_val (score)
-    std::sort(comparisons.begin(), comparisons.end());
+    std::stable_sort(comparisons.begin(), comparisons.end());
 
     QList<OperatingPoint> operatingPoints;
     QList<float> genuines; genuines.reserve(sqrt((float)comparisons.size()));
@@ -226,6 +258,7 @@ float Evaluate(const Mat &simmat, const Mat &mask, const QString &csv, const QSt
         if ((falsePositives > previousFalsePositives) &&
              (truePositives > previousTruePositives)) {
             operatingPoints.append(OperatingPoint(thresh, float(falsePositives)/impostorCount, float(truePositives)/genuineCount));
+
             if (EERIndex == 0) {
                 if (floor(float(falsePositives)/impostorCount*100+0.5)/100 == floor((1-float(truePositives)/genuineCount)*100+0.5)/100) EERIndex = index-1;
             }
@@ -272,7 +305,7 @@ float Evaluate(const Mat &simmat, const Mat &mask, const QString &csv, const QSt
     // Write Detection Error Tradeoff (DET), PRE, REC
     float FAR=0.000001;
     for (int i=0; i<Max_Points; i++) {
-        OperatingPoint operatingPoint = getOperatingPoint(operatingPoints, FAR);
+        OperatingPoint operatingPoint = getOperatingPointGivenFAR(operatingPoints, FAR);
         lines.append(QString("DET,%1,%2").arg(QString::number(FAR),
                                               QString::number(1-operatingPoint.TAR)));
         lines.append(QString("FAR,%1,%2").arg(QString::number(operatingPoint.score),
@@ -283,13 +316,17 @@ float Evaluate(const Mat &simmat, const Mat &mask, const QString &csv, const QSt
         FAR *=1.02807;
     }
 
-    // Write FAR/TAR Table (FT)
-    lines.append(qPrintable(QString("FT,0.000001,%1").arg(QString::number(getOperatingPoint(operatingPoints, 0.000001).TAR, 'f', 3))));
-    lines.append(qPrintable(QString("FT,0.00001,%1").arg(QString::number(getOperatingPoint(operatingPoints, 0.00001).TAR, 'f', 3))));
-    lines.append(qPrintable(QString("FT,0.0001,%1").arg(QString::number(getOperatingPoint(operatingPoints, 0.0001).TAR, 'f', 3))));
-    lines.append(qPrintable(QString("FT,0.001,%1").arg(QString::number(getOperatingPoint(operatingPoints, 0.001).TAR, 'f', 3))));
-    lines.append(qPrintable(QString("FT,0.01,%1").arg(QString::number(getOperatingPoint(operatingPoints, 0.01).TAR, 'f', 3))));
-    lines.append(qPrintable(QString("FT,0.1,%1").arg(QString::number(getOperatingPoint(operatingPoints, 0.1).TAR, 'f', 3))));
+    // Write TAR@FAR Table (FT)
+    foreach (float far, QList<float>() << 1e-6 << 1e-5 << 1e-4 << 1e-3 << 1e-2 << 1e-1)
+      lines.append(qPrintable(QString("FT,%1,%2").arg(
+						      QString::number(far, 'f'),
+						      QString::number(getOperatingPointGivenFAR(operatingPoints, far).TAR, 'f', 3))));
+
+    // Write FAR@TAR Table (FatT)
+    foreach (float tar, QList<float>() << 0.95 << 0.85 << 0.75 << 0.65 << 0.5 << 0.4)
+      lines.append(qPrintable(QString("FatT,%1,%2").arg(
+                         QString::number(tar, 'f', 2),
+                         QString::number(getOperatingPointGivenTAR(operatingPoints, tar).FAR, 'f', 3))));
 
     //Write CMC Table (CT)
     lines.append(qPrintable(QString("CT,1,%1").arg(QString::number(getCMC(firstGenuineReturns, 1), 'f', 3))));
@@ -300,12 +337,12 @@ float Evaluate(const Mat &simmat, const Mat &mask, const QString &csv, const QSt
     lines.append(qPrintable(QString("CT,100,%1").arg(QString::number(getCMC(firstGenuineReturns, 100), 'f', 3))));
 
     // Write FAR/TAR Bar Chart (BC)
-    lines.append(qPrintable(QString("BC,0.001,%1").arg(QString::number(getOperatingPoint(operatingPoints, 0.001).TAR, 'f', 3))));
-    lines.append(qPrintable(QString("BC,0.01,%1").arg(QString::number(result = getOperatingPoint(operatingPoints, 0.01).TAR, 'f', 3))));
+    lines.append(qPrintable(QString("BC,0.001,%1").arg(QString::number(getOperatingPointGivenFAR(operatingPoints, 0.001).TAR, 'f', 3))));
+    lines.append(qPrintable(QString("BC,0.01,%1").arg(QString::number(result = getOperatingPointGivenFAR(operatingPoints, 0.01).TAR, 'f', 3))));
 
     // Attempt to read template size from enrolled gallery and write to output CSV
     size_t maxSize(0);
-    if (target.endsWith(".gal")) {
+    if (target.endsWith(".gal") && QFileInfo(target).exists()) {
         foreach (const Template &t, TemplateList::fromGallery(target)) maxSize = max(maxSize, t.bytes());
         lines.append(QString("TS,,%1").arg(QString::number(maxSize)));
     }
@@ -338,10 +375,10 @@ float Evaluate(const Mat &simmat, const Mat &mask, const QString &csv, const QSt
 
     QtUtils::writeFile(csv, lines);
     if (maxSize > 0) qDebug("Template Size: %i bytes", (int)maxSize);
-    qDebug("TAR @ FAR = 0.01:    %.3f",getOperatingPoint(operatingPoints, 0.01).TAR);
-    qDebug("TAR @ FAR = 0.001:   %.3f",getOperatingPoint(operatingPoints, 0.001).TAR);
-    qDebug("TAR @ FAR = 0.0001:  %.3f",getOperatingPoint(operatingPoints, 0.0001).TAR);
-    qDebug("TAR @ FAR = 0.00001: %.3f",getOperatingPoint(operatingPoints, 0.00001).TAR);
+    qDebug("TAR @ FAR = 0.01:    %.3f",getOperatingPointGivenFAR(operatingPoints, 0.01).TAR);
+    qDebug("TAR @ FAR = 0.001:   %.3f",getOperatingPointGivenFAR(operatingPoints, 0.001).TAR);
+    qDebug("TAR @ FAR = 0.0001:  %.3f",getOperatingPointGivenFAR(operatingPoints, 0.0001).TAR);
+    qDebug("TAR @ FAR = 0.00001: %.3f",getOperatingPointGivenFAR(operatingPoints, 0.00001).TAR);
 
     qDebug("\nRetrieval Rate @ Rank = %d: %.3f", Report_Retrieval, getCMC(firstGenuineReturns, Report_Retrieval));
 
@@ -566,8 +603,8 @@ float InplaceEval(const QString &simmat, const QString &target, const QString &q
 
     float result;
     // Write FAR/TAR Bar Chart (BC)
-    lines.append(qPrintable(QString("BC,0.001,%1").arg(QString::number(getOperatingPoint(operatingPoints, 0.001).TAR, 'f', 3))));
-    lines.append(qPrintable(QString("BC,0.01,%1").arg(QString::number(result = getOperatingPoint(operatingPoints, 0.01).TAR, 'f', 3))));
+    lines.append(qPrintable(QString("BC,0.001,%1").arg(QString::number(getOperatingPointGivenFAR(operatingPoints, 0.001).TAR, 'f', 3))));
+    lines.append(qPrintable(QString("BC,0.01,%1").arg(QString::number(result = getOperatingPointGivenFAR(operatingPoints, 0.01).TAR, 'f', 3))));
 
     qDebug("TAR @ FAR = 0.01: %.3f", result);
     QtUtils::writeFile(csv, lines);
@@ -1032,56 +1069,120 @@ float EvalDetection(const QString &predictedGallery, const QString &truthGallery
     return averageOverlap;
 }
 
-float EvalLandmarking(const QString &predictedGallery, const QString &truthGallery, const QString &csv, int normalizationIndexA, int normalizationIndexB)
+static void projectAndWrite(Transform *t, const Template &src, const QString &filePath)
+{
+    Template dst;
+    t->project(src,dst);
+    OpenCVUtils::saveImage(dst.m(),filePath);
+}
+
+float EvalLandmarking(const QString &predictedGallery, const QString &truthGallery, const QString &csv, int normalizationIndexA, int normalizationIndexB, int sampleIndex, int totalExamples)
 {
     qDebug("Evaluating landmarking of %s against %s", qPrintable(predictedGallery), qPrintable(truthGallery));
-    const TemplateList predicted(TemplateList::fromGallery(predictedGallery));
-    const TemplateList truth(TemplateList::fromGallery(truthGallery));
-    const QStringList predictedNames = File::get<QString>(predicted, "name");
-    const QStringList truthNames = File::get<QString>(truth, "name");
+    TemplateList predicted(TemplateList::fromGallery(predictedGallery));
+    TemplateList truth(TemplateList::fromGallery(truthGallery));
+    QStringList predictedNames = File::get<QString>(predicted, "name");
+    QStringList truthNames = File::get<QString>(truth, "name");
 
     int skipped = 0;
     QList< QList<float> > pointErrors;
+    QList<float> imageErrors;
+    QList<float> normalizedLengths;
     for (int i=0; i<predicted.size(); i++) {
         const QString &predictedName = predictedNames[i];
         const int truthIndex = truthNames.indexOf(predictedName);
         if (truthIndex == -1) qFatal("Could not identify ground truth for file: %s", qPrintable(predictedName));
         const QList<QPointF> predictedPoints = predicted[i].file.points();
         const QList<QPointF> truthPoints = truth[truthIndex].file.points();
-        if (predictedPoints.size() != truthPoints.size()) {
-            skipped++;
+        if (predictedPoints.size() != truthPoints.size() || truthPoints.contains(QPointF(-1,-1))) {
+            predicted.removeAt(i);
+            predictedNames.removeAt(i);
+            truth.removeAt(i);
+            truthNames.removeAt(i);
+            i--; skipped++;
             continue;
         }
+
         while (pointErrors.size() < predictedPoints.size())
             pointErrors.append(QList<float>());
+
+        // Want to know error for every image.
+
         if (normalizationIndexA >= truthPoints.size()) qFatal("Normalization index A is out of range.");
         if (normalizationIndexB >= truthPoints.size()) qFatal("Normalization index B is out of range.");
         const float normalizedLength = QtUtils::euclideanLength(truthPoints[normalizationIndexB] - truthPoints[normalizationIndexA]);
-        for (int j=0; j<predictedPoints.size(); j++)
-            pointErrors[j].append(QtUtils::euclideanLength(predictedPoints[j] - truthPoints[j])/normalizedLength);
+        normalizedLengths.append(normalizedLength);
+        float totalError = 0;
+        for (int j=0; j<predictedPoints.size(); j++) {
+            float error = QtUtils::euclideanLength(predictedPoints[j] - truthPoints[j])/normalizedLength;
+            totalError += error;
+            pointErrors[j].append(error);
+        }
+        imageErrors.append(totalError/predictedPoints.size());
     }
-    qDebug() << "Skipped " << skipped << " files due to point size mismatch.";
+
+    qDebug() << "Skipped" << skipped << "files due to point size mismatch.";
 
     QList<float> averagePointErrors; averagePointErrors.reserve(pointErrors.size());
-    for (int i=0; i<pointErrors.size(); i++) {
-        std::sort(pointErrors[i].begin(), pointErrors[i].end());
-        averagePointErrors.append(Common::Mean(pointErrors[i]));
-    }
-    const float averagePointError = Common::Mean(averagePointErrors);
 
     QStringList lines;
     lines.append("Plot,X,Y");
+
+    QtUtils::touchDir(QDir("landmarking_examples_truth"));
+    QtUtils::touchDir(QDir("landmarking_examples_predicted"));
+
+    // Example
+    {
+        QScopedPointer<Transform> t(Transform::make("Open+Draw(verbose,rects=false,location=false)",NULL));
+
+        QString filePath = "landmarking_examples_truth/"+truth[sampleIndex].file.fileName();
+        projectAndWrite(t.data(), truth[sampleIndex],filePath);
+        lines.append("Sample,"+filePath+","+QString::number(truth[sampleIndex].file.points().size()));
+    }
+
+    // Get best and worst performing examples
+    QList< QPair<float,int> > exampleIndices = Common::Sort(imageErrors,true);
+
+    QScopedPointer<Transform> t(Transform::make("Open+Draw(rects=false)",NULL));
+
+    for (int i=0; i<totalExamples; i++) {
+        QString filePath = "landmarking_examples_truth/"+truth[exampleIndices[i].second].file.fileName();
+        projectAndWrite(t.data(), truth[exampleIndices[i].second],filePath);
+        lines.append("EXT,"+filePath+","+QString::number(exampleIndices[i].first));
+
+        filePath = "landmarking_examples_predicted/"+predicted[exampleIndices[i].second].file.fileName();
+        projectAndWrite(t.data(), predicted[exampleIndices[i].second],filePath);
+        lines.append("EXP,"+filePath+","+QString::number(exampleIndices[i].first));
+    }
+
+    for (int i=exampleIndices.size()-1; i>exampleIndices.size()-totalExamples-1; i--) {
+        QString filePath = "landmarking_examples_truth/"+truth[exampleIndices[i].second].file.fileName();
+        projectAndWrite(t.data(), truth[exampleIndices[i].second],filePath);
+        lines.append("EXT,"+filePath+","+QString::number(exampleIndices[i].first));
+
+        filePath = "landmarking_examples_predicted/"+predicted[exampleIndices[i].second].file.fileName();
+        projectAndWrite(t.data(), predicted[exampleIndices[i].second],filePath);
+        lines.append("EXP,"+filePath+","+QString::number(exampleIndices[i].first));
+    }
+
     for (int i=0; i<pointErrors.size(); i++) {
+        std::sort(pointErrors[i].begin(), pointErrors[i].end());
+        averagePointErrors.append(Common::Mean(pointErrors[i]));
         const QList<float> &pointError = pointErrors[i];
         const int keep = qMin(Max_Points, pointError.size());
         for (int j=0; j<keep; j++)
             lines.append(QString("Box,%1,%2").arg(QString::number(i), QString::number(pointError[j*(pointError.size()-1)/(keep-1)])));
     }
 
+    const float averagePointError = Common::Mean(averagePointErrors);
+
     lines.append(QString("AvgError,0,%1").arg(averagePointError));
+    lines.append(QString("NormLength,0,%1").arg(Common::Mean(normalizedLengths)));
 
     QtUtils::writeFile(csv, lines);
-    qDebug("Average Error: %.3f", averagePointError);
+
+    qDebug("Average Error for all Points: %.3f", averagePointError);
+
     return averagePointError;
 }
 

@@ -115,6 +115,9 @@ private:
     void project(const Template &src, Template &dst) const
     {
         dst.file = src.file;
+        if (Globals->verbose)
+            qDebug("Opening %s", qPrintable(src.file.flat()));
+
         if (src.empty()) {
             const Mat img = imread(src.file.resolved().toStdString(), mode);
             if (img.data) dst.append(img);
@@ -126,6 +129,8 @@ private:
                 else          dst.file.fte = true;
             }
         }
+        if (dst.file.fte)
+            qWarning("Error opening %s", qPrintable(src.file.flat()));
     }
 };
 BR_REGISTER(Transform, ReadTransform)
@@ -981,7 +986,10 @@ class FileExclusionTransform : public UntrainableMetaTransform
     {
         if (exclusionGallery.isEmpty())
             return;
-        FileList temp = FileList::fromGallery(exclusionGallery);
+        File rFile(exclusionGallery);
+        rFile.remove("append");
+
+        FileList temp = FileList::fromGallery(rFile);
         excluded = QSet<QString>::fromList(temp.names());
     }
 };

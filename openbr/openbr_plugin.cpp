@@ -19,6 +19,7 @@
 #include <QFutureSynchronizer>
 #include <QLocalSocket>
 #include <QMetaProperty>
+#include <qnumeric.h>
 #include <QPointF>
 #include <QProcess>
 #include <QRect>
@@ -190,7 +191,7 @@ QList<QPointF> File::namedPoints() const
         const QVariant &variant = m_metadata[key];
         if (variant.canConvert<QPointF>()) {
             const QPointF point = variant.value<QPointF>();
-            if (!std::isnan(point.x()) && !std::isnan(point.y()))
+            if (!qIsNaN(point.x()) && !qIsNaN(point.y()))
                 landmarks.append(point);
         }
     }
@@ -819,13 +820,63 @@ void Object::load(QDataStream &stream)
     init();
 }
 
-bool Object::setPropertyRecursive(const QString &name, QVariant value)
+bool Object::setExistingProperty(const QString &name, QVariant value)
 {
     if (this->metaObject()->indexOfProperty(qPrintable(name)) == -1)
         return false;
     setProperty(name, value);
     init();
     return true;
+}
+
+QList<Object *> Object::getChildren() const
+{
+    QList<Object *> output;
+    for (int i=0; i < metaObject()->propertyCount(); i++) {
+        const char *prop_name = metaObject()->property(i).name();
+        const QVariant &variant = this->property(prop_name);
+
+        if (variant.canConvert<Transform *>()) {
+            Transform *tform = variant.value<Transform *>();
+            if (tform)
+                output.append((Object* ) variant.value<Transform *>());
+        }
+        else if (variant.canConvert<QList<Transform *> >()) {
+            foreach (const Transform *tform, variant.value<QList<Transform *> >()) {
+                if (tform)
+                    output.append((Object *) tform);
+            }
+        }
+        else if (variant.canConvert<Distance *>()) {
+            Distance *dist = variant.value<Distance *>();
+            if (dist)
+                output.append((Object* ) variant.value<Distance *>());
+        }
+        else if (variant.canConvert<QList<Distance *> >()) {
+            foreach (const Distance *dist, variant.value<QList<Distance *> >()) {
+                if (dist)
+                    output.append((Object *) dist);
+            }
+        }
+    }
+    return output;
+}
+
+bool Object::setPropertyRecursive(const QString &name, QVariant value)
+{
+    // collect children
+    bool res = setExistingProperty(name, value);
+    if (res)
+        return true;
+
+    QList<Object *> children = getChildren();
+    foreach (Object *obj, children) {
+        if (obj->setPropertyRecursive(name, value)) {
+            init();
+            return true;
+        }
+    }
+    return false;
 }
 
 void Object::setProperty(const QString &name, QVariant value)
@@ -1320,6 +1371,17 @@ void MatrixOutput::set(float value, int i, int j)
 
 BR_REGISTER(Output, MatrixOutput)
 
+/* Format - public methods */
+Template Format::read(const QString &file)
+{
+    return QScopedPointer<Format>(Factory<Format>::make(file))->read();
+}
+
+void Format::write(const QString &file, const Template &t)
+{
+    QScopedPointer<Format>(Factory<Format>::make(file))->write(t);
+}
+
 /* Gallery - public methods */
 TemplateList Gallery::read()
 {
@@ -1360,8 +1422,13 @@ void Gallery::init()
 {
     if (file.exists() && file.contains("append"))
     {
-        TemplateList data = this->read();
-        this->writeBlock(data);
+        File rFile = file;
+        rFile.remove("append");
+        Gallery *reader = Gallery::make(rFile);
+        TemplateList data = reader->read();
+        delete reader;
+
+        writeBlock(data);
     }
 }
 
@@ -1411,6 +1478,13 @@ Transform *Transform::make(QString str, QObject *parent)
     if (str.startsWith('(') && str.endsWith(')'))
         return make(str.mid(1, str.size()-2), parent);
 
+    // Base name not found? Try constructing it via LoadStore
+    if (!Factory<Transform>::names().contains(parsed.suffix())) {
+        Transform *tform = make("<"+parsed.suffix()+">", parent);
+        applyAdditionalProperties(parsed, tform);
+        return tform;
+    }
+
     //! [Construct the root transform]
     Transform *transform = Factory<Transform>::make("." + str);
     //! [Construct the root transform]
@@ -1456,24 +1530,9 @@ void Transform::project(const TemplateList &src, TemplateList &dst) const
     futures.waitForFinished();
 }
 
-QList<Transform *> Transform::getChildren() const
-{
-    QList<Transform *> output;
-    for (int i=0; i < metaObject()->propertyCount(); i++) {
-        const char *prop_name = metaObject()->property(i).name();
-        const QVariant &variant = this->property(prop_name);
-
-        if (variant.canConvert<Transform *>())
-            output.append(variant.value<Transform *>());
-        if (variant.canConvert<QList<Transform *> >())
-            output.append(variant.value<QList<Transform *> >());
-    }
-    return output;
-}
-
 TemplateEvent *Transform::getEvent(const QString &name)
 {
-    foreach (Transform *child, getChildren()) {
+    foreach (Transform *child, getChildren<Transform>()) {
         TemplateEvent *probe = child->getEvent(name);
         if (probe)
             return probe;
