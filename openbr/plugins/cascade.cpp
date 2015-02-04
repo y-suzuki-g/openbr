@@ -1,6 +1,7 @@
-#include <iostream>
 #include "openbr_internal.h"
 #include "openbr/openbr_plugin.h"
+#include "openbr/core/boost.h"
+#include "openbr/core/opencvutils.h"
 
 using namespace cv;
 using namespace std;

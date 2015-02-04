@@ -15,6 +15,7 @@
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 #include <opencv2/objdetect/objdetect.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
 #include "openbr_internal.h"
 #include "openbr/core/opencvutils.h"
 #include "openbr/core/resource.h"
@@ -195,7 +196,7 @@ private:
  * \author Josh Klontz \cite jklontz
  * \author David Crouse \cite dgcrouse
  */
-class CascadeTransform : public MetaTransform
+class CvCascadeTransform : public MetaTransform
 {
     Q_OBJECT
     Q_PROPERTY(QString model READ get_model WRITE set_model RESET reset_model STORED false)
@@ -434,7 +435,47 @@ class CascadeTransform : public MetaTransform
     }
 };
 
-BR_REGISTER(Transform, CascadeTransform)
+BR_REGISTER(Transform, CvCascadeTransform)
+
+class CvCascadeShowTransform : public UntrainableTransform
+{
+    Q_OBJECT
+    Q_PROPERTY(QString model READ get_model WRITE set_model RESET reset_model STORED false)
+    Q_PROPERTY(int minSize READ get_minSize WRITE set_minSize RESET reset_minSize STORED false)
+    Q_PROPERTY(int minNeighbors READ get_minNeighbors WRITE set_minNeighbors RESET reset_minNeighbors STORED false)
+    BR_PROPERTY(QString, model, "FrontalFace")
+    BR_PROPERTY(int, minSize, 64)
+    BR_PROPERTY(int, minNeighbors, 5)
+
+    Resource<CascadeClassifier> cascadeResource;
+
+    void init()
+    {
+        cascadeResource.setResourceMaker(new CascadeResourceMaker(model));
+    }
+
+    void project(const Template &src, Template &dst) const
+    {
+        CascadeClassifier *cascade = cascadeResource.acquire();
+
+        if (src.empty())
+            return;
+
+        dst = src;
+
+        Mat gray, uchar;
+        cvtColor(src, gray, CV_BGR2GRAY);
+        OpenCVUtils::cvtUChar(gray, uchar);
+        std::vector<Rect> rects;
+        cascade->detectMultiScale(uchar, rects, 1.2, minNeighbors, src.file.get<bool>("enrollAll") ? 0 : CASCADE_FIND_BIGGEST_OBJECT, Size(minSize, minSize));
+
+        dst.file.appendRects(QList<Rect>::fromVector(QVector<Rect>::fromStdVector(rects)));
+
+        cascadeResource.release(cascade);
+    }
+};
+
+BR_REGISTER(Transform, CvCascadeShowTransform)
 
 class KeyToRectTransform : public UntrainableMetadataTransform
 {
