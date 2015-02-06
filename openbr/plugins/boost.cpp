@@ -1,7 +1,7 @@
 #include "openbr_internal.h"
-#include "openbr/openbr_plugin.h"
-#include "openbr/core/boost.h"
-
+#include <openbr/openbr_plugin.h>
+#include <openbr/core/boost.h>
+#include <openbr/core/opencvutils.h>
 #include <QtConcurrent>
 
 using namespace cv;
@@ -37,8 +37,6 @@ public:
     BR_PROPERTY(int, maxDepth, 1)
     BR_PROPERTY(int, maxWeakCount, 100)
 
-    CascadeDataStorage *storage;
-    CascadeBoostParams params;
     CascadeBoost boost;
 
     void train(const QList<Mat> &images, const QList<float> &labels)
@@ -49,59 +47,51 @@ public:
 
         representation->train(images, labels);
 
-        storage = new CascadeDataStorage(representation, images.size());
-        fillStorage(images, labels);
-
         boost.clear(); // clear old data if necessary
 
-        params = CascadeBoostParams(boostType, maxWeakCount, trimRate, maxDepth, minTAR, maxFAR);
-        if (!boost.train(storage, images.size(), precalcBufSize, precalcBufSize, params))
+        Mat data = images2FV(images);
+        Mat _labels = OpenCVUtils::toMat(labels, 1);
+        CascadeBoostParams params(boostType, maxWeakCount, trimRate, maxDepth, minTAR, maxFAR);
+        if (!boost.train( data, _labels, params, representation ))
             qFatal("Unable to train Boosted Classifier");    
-
-        // free the train data. Note storage keeps enough space for one image alloc'ed
-        storage->freeTrainData();
-        boost.freeTrainData();
     }
 
     float classify(const Mat &image) const
     {
-        storage->setImage(image, -1, 0);
-        return boost.predict(0, true);
+        return boost.predict(representation->preprocess(image), true);
     }
 
     void store(QDataStream &stream) const
     {
-        params.store(stream);
         boost.store(stream);
     }
 
     void load(QDataStream &stream)
     {
-        params.load(stream);
-        storage = new CascadeDataStorage(representation, 1);
-        boost.load(storage, params, stream);
+        boost.load( representation, stream );
     }
 
     void finalize()
     {
-        delete storage;
         boost.freeTrees();
     }
 
 private:
-    void parallelFill(const Mat &image, float label, int idx)
+    void parallelEnroll(Mat &data, const Mat &sample, int idx)
     {
-        storage->setImage(image, label, idx);
+        Mat featureVector = representation->evaluate(sample);
+        featureVector.copyTo(data.row(idx));
     }
 
-    void fillStorage(const QList<Mat> &images, const QList<float> &labels)
+    Mat images2FV(const QList<Mat> &images)
     {
-        //QFutureSynchronizer<void> sync;
-        for (int i = 0; i < images.size(); i++) {
-            //sync.addFuture(QtConcurrent::run(this, &BoostClassifier::parallelFill, images[i], labels[i], i));
-            storage->setImage(images[i], labels[i], i);
-            printf("Filled: %d / %d\r", i+1, images.size()); fflush(stdout);
-        }
+        qDebug() << "Converting images to feature vectors...";
+        Mat data(images.size(), representation->numFeatures(), CV_32F);
+        QFutureSynchronizer<void> futures;
+        for (int i = 0; i < images.size(); i++)
+            futures.addFuture(QtConcurrent::run(this, &BoostClassifier::parallelEnroll, data, images[i], i));
+        qDebug() << "All images have been converted";
+        return data;
     }
 };
 
