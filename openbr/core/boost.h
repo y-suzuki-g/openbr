@@ -41,6 +41,7 @@ public:
     void store( QDataStream &stream ) const;
     void load( QDataStream &stream );
 
+    void freeOldData();
     void freeTree();
 
 protected:

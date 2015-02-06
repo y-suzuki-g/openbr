@@ -51,6 +51,7 @@ public:
 
         Mat data = images2FV(images);
         Mat _labels = OpenCVUtils::toMat(labels, 1);
+
         CascadeBoostParams params(boostType, maxWeakCount, trimRate, maxDepth, minTAR, maxFAR);
         if (!boost.train( data, _labels, params, representation ))
             qFatal("Unable to train Boosted Classifier");    
@@ -79,7 +80,8 @@ public:
 private:
     void parallelEnroll(Mat &data, const Mat &sample, int idx)
     {
-        Mat featureVector = representation->evaluate(sample);
+        Mat pp = representation->preprocess(sample);
+        Mat featureVector = representation->evaluate(pp);
         featureVector.copyTo(data.row(idx));
     }
 
@@ -90,6 +92,7 @@ private:
         QFutureSynchronizer<void> futures;
         for (int i = 0; i < images.size(); i++)
             futures.addFuture(QtConcurrent::run(this, &BoostClassifier::parallelEnroll, data, images[i], i));
+        futures.waitForFinished();
         qDebug() << "All images have been converted";
         return data;
     }

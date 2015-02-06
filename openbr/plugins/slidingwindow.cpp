@@ -120,7 +120,6 @@ private:
     void getRandomCrops(QList<Mat> &images) const
     {
         Common::seedRNG();
-
         QList<Mat> negSamples;
         foreach (const Mat &image, images) {
             QList<int> xs = Common::RandSample(negsPerImage, image.cols - winWidth - 1, 0, true);
@@ -238,6 +237,7 @@ class ExpandDetectionsTransform : public UntrainableMetaTransform
                 u.file.setRects(QList<QRectF>() << rects[i]);
                 u.file.set("Rect", rects[i]);
                 u.file.set("Confidence", confidences[i]);
+                u.file.remove("Confidences");
                 dst.append(u);
             }
         }

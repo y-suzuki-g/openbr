@@ -65,8 +65,6 @@ bool CascadeBoostTree::train(CvDTreeTrainData *trainData, const CvMat *subsample
 
     simple_root = new CascadeBoostNode;
     buildSimpleTree(simple_root, root);
-    free_tree(); // releases unneeded root
-
     return true;
 }
 
@@ -137,6 +135,11 @@ void CascadeBoostTree::freeTree()
     freeNodeRecursive(simple_root);
 }
 
+void CascadeBoostTree::freeOldData()
+{
+    free_tree();
+}
+
 //----------------------------------- CascadeBoost --------------------------------------
 
 bool CascadeBoost::train( Mat &_data, const Mat &_labels, const CascadeBoostParams& _params, Representation *rep )
@@ -173,6 +176,7 @@ bool CascadeBoost::train( Mat &_data, const Mat &_labels, const CascadeBoostPara
         classifiers.append(tree);
         update_weights( tree );
         trim_weights();
+        tree->freeOldData(); // releases old root after updating weights
 
         if( cvCountNonZero(subsample_mask) == 0 )
             break;
