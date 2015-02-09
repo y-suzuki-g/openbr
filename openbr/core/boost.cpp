@@ -188,8 +188,9 @@ bool CascadeBoost::train( Mat &_data, const Mat &_labels, const CascadeBoostPara
         return false;
     }
 
-    data->is_classifier = true;
     data->free_train_data();
+    delete data;
+
     return true;
 }
 
