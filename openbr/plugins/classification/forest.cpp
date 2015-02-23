@@ -59,12 +59,14 @@ class ForestTransform : public Transform
 
     void load(QDataStream &stream)
     {
-        OpenCVUtils::loadModel(forest,stream);
+        forest.load("forest_model.xml");
+        //OpenCVUtils::loadModel(forest,stream);
     }
 
     void store(QDataStream &stream) const
     {
-        OpenCVUtils::storeModel(forest,stream);
+        forest.save("forest_model.xml");
+        //OpenCVUtils::storeModel(forest,stream);
     }
 
     void init()
