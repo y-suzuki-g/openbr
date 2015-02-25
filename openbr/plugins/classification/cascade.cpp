@@ -15,10 +15,12 @@ class CascadeClassifierTransform : public Transform
     Q_PROPERTY(int numStages READ get_numStages WRITE set_numStages RESET reset_numStages STORED false)
     Q_PROPERTY(float maxFAR READ get_maxFAR WRITE set_maxFAR RESET reset_maxFAR STORED false)
     Q_PROPERTY(bool returnConfidence READ get_returnConfidence WRITE set_returnConfidence RESET reset_returnConfidence STORED false)
+    Q_PROPERTY(bool ROCMode READ get_ROCMode WRITE set_ROCMode RESET reset_ROCMode STORED false)
     BR_PROPERTY(QString, description, "")
     BR_PROPERTY(int, numStages, 20)
     BR_PROPERTY(float, maxFAR, 0.005)
     BR_PROPERTY(bool, returnConfidence, true)
+    BR_PROPERTY(bool, ROCMode, false)
 
     QList<Classifier*> stages;
 
@@ -101,11 +103,14 @@ class CascadeClassifierTransform : public Transform
 private:
     float classify(const Mat &image) const
     {
-        float val;
-        foreach (const Classifier *stage, stages)
-            if ((val = stage->classify(image)) < 0.0f)
+        int i; float val;
+        for (i = 0; i < stages.size(); i++)
+            if ((val = stages[i]->classify(image)) < 0.0f)
                 break;
-        return val;
+
+        if (!ROCMode && i < stages.size())
+            return -1.;
+        return val * i;
     }
 
     void printStats(QList<float> &labels, int numPos, int numNeg)

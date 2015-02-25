@@ -1,6 +1,7 @@
 # Optional Appendable CMake Variables:
 # BR_THIRDPARTY_PLUGINS     - Additional plugins
 # BR_THIRDPARTY_PLUGINS_DIR - Additional folder(s) of plugins
+# BR_EXCLUDED_PLUGINS       - Plugins that should not be built in the current configuration
 # BR_THIRDPARTY_SRC         - Additional source code needed by a plugin
 # BR_THIRDPARTY_LIBS        - Additional libaries needed by a plugin
 
@@ -28,7 +29,6 @@ endforeach()
 # Collect all source files except for excluded plugins
 foreach(DIR ${BR_PLUGINS_DIR} ${BR_THIRDPARTY_PLUGINS_DIR})
   get_filename_component(DIR_NAME ${DIR} NAME)
-  set(AUTOMOC_TARGETS_FOLDER ${CMAKE_BINARY_DIR}/openbr/${DIR_NAME})
   file(GLOB PLUGINS ${DIR}/*.cpp ${DIR}/*.h)
   foreach(PLUGIN ${PLUGINS})
     get_filename_component(PLUGIN_NAME ${PLUGIN} NAME)

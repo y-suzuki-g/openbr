@@ -100,4 +100,4 @@ BR_REGISTER(Classifier, BoostClassifier)
 
 } // namespace br
 
-#include "boost.moc"
+#include "classification/boost.moc"
