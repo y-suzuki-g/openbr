@@ -1,7 +1,7 @@
 # Optional Appendable CMake Variables:
 # BR_THIRDPARTY_PLUGINS     - Additional plugins
 # BR_THIRDPARTY_PLUGINS_DIR - Additional folder(s) of plugins
-# BR_EXCLUDED_PLUGINS       - Plugins that should not be built in the current configuration
+# BR_EXCLUDED_PLUGINS       - Plugins that should not be built
 # BR_THIRDPARTY_SRC         - Additional source code needed by a plugin
 # BR_THIRDPARTY_LIBS        - Additional libaries needed by a plugin
 
@@ -22,7 +22,9 @@ mark_as_advanced(BR_EXCLUDED_PLUGINS)
 foreach(DIR plugins/cmake ${BR_THIRDPARTY_PLUGINS_DIR})
   file(GLOB CMAKE_FILES ${DIR}/*.cmake)
   foreach(CMAKE_FILE ${CMAKE_FILES})
-    include(${CMAKE_FILE})
+    if (NOT ${CMAKE_FILE} MATCHES "Find.*cmake")
+      include(${CMAKE_FILE})
+    endif()
   endforeach()
 endforeach()
 
