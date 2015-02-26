@@ -37,6 +37,8 @@ class CascadeClassifierTransform : public Transform
         const int numPos = labels.count(1.0f);
         const int numNeg = (int)labels.size() - numPos;
 
+        stages.clear();
+
         QDateTime start = QDateTime::currentDateTime();
 
         for (int i = 0; i < numStages; i++) {
