@@ -65,13 +65,11 @@ class RndRectTransform : public UntrainableMetaTransform
                 while (std::accumulate(labelCount.begin(),labelCount.end(),0.0) < (sampleOverlapBands.size()-1)*samplesPerOverlapBand) {
                     int x = Common::RandSample(1, region.center().x() + sampleFactor*region.width(), region.center().x() - sampleFactor*region.width())[0];
                     int y = Common::RandSample(1, region.center().y() + sampleFactor*region.height(), region.center().y() - sampleFactor*region.height())[0];
-                    int w = Common::RandSample(1, sampleFactor*region.width(), region.width())[0];
-                    int h = Common::RandSample(1, sampleFactor*region.height(), region.height())[0];
 
-                    if (x < 0 || y < 0 || x + w > t.m().cols || y + h > t.m().rows)
+                    if (x < 0 || y < 0 || x + rect.width() > t.m().cols || y + rect.height() > t.m().rows)
                         continue;
 
-                    QRectF negativeLocation = QRectF(x, y, w, h);
+                    QRectF negativeLocation = QRectF(x, y, rect.width(), rect.height());
 
                     float overlap = pow(QtUtils::overlap(region, negativeLocation),overlapPower);
 
