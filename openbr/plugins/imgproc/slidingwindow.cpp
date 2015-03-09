@@ -25,7 +25,7 @@ using namespace cv;
 namespace br
 {
 
-class SlidingWindowTransform : public Transform
+class SlidingWindowTransform : public UntrainableMetaTransform
 {
     Q_OBJECT
 
@@ -36,11 +36,6 @@ class SlidingWindowTransform : public Transform
     Q_PROPERTY(int maxSize READ get_maxSize WRITE set_maxSize RESET reset_maxSize STORED false)
     Q_PROPERTY(float scaleFactor READ get_scaleFactor WRITE set_scaleFactor RESET reset_scaleFactor STORED false)
     Q_PROPERTY(float threshold READ get_threshold WRITE set_threshold RESET reset_threshold STORED false)
-
-    Q_PROPERTY(bool bootstrap READ get_bootstrap WRITE set_bootstrap RESET reset_bootstrap STORED false)
-    Q_PROPERTY(int numNegs READ get_numNegs WRITE set_numNegs RESET reset_numNegs STORED false)
-    Q_PROPERTY(int iterations READ get_iterations WRITE set_iterations RESET reset_iterations STORED false)
-
     BR_PROPERTY(br::Transform*, transform, NULL)
     BR_PROPERTY(int, winWidth, 24)
     BR_PROPERTY(int, winHeight, 24)
@@ -49,49 +44,21 @@ class SlidingWindowTransform : public Transform
     BR_PROPERTY(float, scaleFactor, 1.2)
     BR_PROPERTY(float, threshold, 0)
 
-    BR_PROPERTY(bool, bootstrap, false)
-    BR_PROPERTY(int, numNegs, 5)
-    BR_PROPERTY(int, iterations, 5)
-
-    void train(const TemplateList &data)
+    void project(const Template &src, Template &dst) const
     {
-        if (!bootstrap) {
-            transform->train(data);
-            return;
-        }
-
-        TemplateList mutData = data, bsData;
-        foreach (const Template &t, data)
-            randomSamples(t, bsData);
-
-        transform->train(bsData);
-        bsData.clear();
-
-        for (int it = 0; it < iterations; it++) {
-            for (int i = 0; i < mutData.size(); i++) {
-                Template t = mutData[i];
-                QList<Rect> gtRects = OpenCVUtils::toRects(t.file.rects());
-                t.file.clearRects();
-
-                Template dst;
-                project(t, dst);
-
-                hardSamples(dst, bsData, gtRects);
-            }
-
-            transform->train(bsData);
-            bsData.clear();
-        }
+        TemplateList temp;
+        project(TemplateList() << src, temp);
+        if (!temp.isEmpty()) dst = temp.first();
     }
 
-    void project(const Template &src, Template &dst) const
+    void project(const TemplateList &src, TemplateList &dst) const
     {
         if (src.size() != 1)
             qFatal("Sliding Window only supports templates with 1 mat");
 
-        dst = src;
+        //dst = src;
 
-        const Mat m = src.first();
+        const Mat m = src.first().m();
 
         int effectiveMaxSize = maxSize;
         if (maxSize < 0)
@@ -104,85 +71,22 @@ class SlidingWindowTransform : public Transform
         for (float scale = scaleFrom; scale < scaleTo + 0.001; scale *= scaleFactor) {
             resize(m, scaledImage, Size(), scale, scale);
 
-            const int step = scale < 1. ? 2 : 4;
+            const int step = scale < 1. ? 4 : 8;
             for (int y = 0; y < (scaledImage.rows - winHeight); y += step) {
                 for (int x = 0; x < (scaledImage.cols - winWidth); x += step) {
-                    Template u(src.file, scaledImage(Rect(x, y, winWidth, winHeight))), t;
-                    transform->project(u, t);
-
-                    float confidence = t.m().at<float>(0,0);
-                    if (confidence > threshold) {
-                        dst.file.appendRect(Rect(qRound(x/scale), qRound(y/scale), qRound(winWidth/scale), qRound(winHeight/scale)));
-                        confidences.append(confidence);
-                    }
+                    //Template u(src.file, scaledImage(Rect(x, y, winWidth, winHeight))), t;
+                    //transform->project(u, t);
+                    Template u(src.first().file, scaledImage);
+                    u.file.appendRect(Rect(x, y, winWidth, winHeight));
+                    dst.append(u);
+                    //float confidence = t.m().at<float>(0,0);
+                    //if (confidence > threshold) {
+                    //    dst.file.appendRect(Rect(qRound(x/scale), qRound(y/scale), qRound(winWidth/scale), qRound(winHeight/scale)));
+                    //    confidences.append(confidence);
+                    //}
                 }
             }
-            dst.file.setList<float>("Confidences", confidences);
-        }
-    }
-
-    void randomSamples(const Template &t, TemplateList &data)
-    {
-        QList<Rect> gtRects = OpenCVUtils::toRects(t.file.rects());
-
-        // first get the positive samples
-        foreach (const Rect &r, gtRects) {
-            Rect safe_r(qMax(r.x, 0), qMax(r.y, 0), qMin(t.m().cols - qMax(r.x, 0), r.width), qMin(t.m().rows - qMax(r.y, 0), r.height));
-            Mat pos;
-            resize(t.m()(safe_r), pos, Size(winWidth, winHeight));
-            Template u(t.file, pos);
-            u.file.set("Label", QVariant::fromValue(1.));
-            data.append(u);
-        }
-
-        Common::seedRNG();
-
-        // now the random negatives
-        int negCount = 0;
-        while (negCount < numNegs) {
-            int x = Common::RandSample(1, t.m().cols - winWidth, 0).first();
-            int y = Common::RandSample(1, t.m().rows - winHeight, 0).first();
-            int w = Common::RandSample(1, t.m().cols - x, 5).first();
-            int h = Common::RandSample(1, t.m().rows - y, 5).first();
-
-            Rect nr(x, y, w, h);
-
-            if (OpenCVUtils::overlaps(gtRects, nr, 0.5))
-                continue;
-
-            Mat neg;
-            resize(t.m()(nr), neg, Size(winWidth, winHeight));
-            Template u(t.file, neg);
-            u.file.set("Label", QVariant::fromValue(0.));
-            data.append(u);
-            negCount++;
-        }
-    }
-
-    void hardSamples(const Template &t, TemplateList &data, QList<Rect> &gtRects)
-    {
-        QList<Rect> predRects = OpenCVUtils::toRects(t.file.rects());
-
-        // first get the positive samples
-        foreach (const Rect &r, gtRects) {
-            Rect safe_r(qMax(r.x, 0), qMax(r.y, 0), qMin(t.m().cols - qMax(r.x, 0), r.width), qMin(t.m().rows - qMax(r.y, 0), r.height));
-            Mat pos;
-            resize(t.m()(safe_r), pos, Size(winWidth, winHeight));
-            Template u(t.file, pos);
-            u.file.set("Label", QVariant::fromValue(1.));
-            data.append(u);
-        }
-
-        // now the hard negatives
-        foreach (const Rect &pr, predRects) {
-            if (OpenCVUtils::overlaps(gtRects, pr, 0.5))
-                continue;
-
-            Mat neg;
-            resize(t.m()(pr), neg, Size(winWidth, winHeight));
-            Template u(t.file, neg);
-            u.file.set("Label", QVariant::fromValue(0.));
-            data.append(u);
+            //dst.file.setList<float>("Confidences", confidences);
         }
     }
 };
