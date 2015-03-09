@@ -61,10 +61,10 @@ class RndRectTransform : public UntrainableMetaTransform
                     labelCount << 0;
 
                 while (std::accumulate(labelCount.begin(),labelCount.end(),0.0) < (sampleOverlapBands.size()-1)*samplesPerOverlapBand) {
-                    int x = Common::RandSample(1, region.x() + sampleFactor*region.width(), region.x() - sampleFactor/(2*region.width()))[0];
-                    int y = Common::RandSample(1, region.y() + sampleFactor*region.height(), region.y() - sampleFactor/(2*region.height()))[0];
-                    int w = Common::RandSample(1, sampleFactor*region.width(), region.width())[0];
-                    int h = Common::RandSample(1, sampleFactor*region.height(), region.height())[0];
+                    int x = Common::RandSample(1, region.center().x() + sampleFactor*region.width(), region.center().x() - sampleFactor*region.width())[0];
+                    int y = Common::RandSample(1, region.center().y() + sampleFactor*region.height(), region.center().y() - sampleFactor*region.height())[0];
+                    int w = Common::RandSample(1, qMax(fabs(region.center().x() - x), region.width()+1), region.width())[0];
+                    int h = Common::RandSample(1, qMax(fabs(region.center().y() - y), region.height()+1), region.height())[0];
 
                     if (x < 0 || y < 0 || x + w > t.m().cols || y + h > t.m().rows)
                         continue;
