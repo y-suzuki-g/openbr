@@ -25,7 +25,7 @@ using namespace cv;
 namespace br
 {
 
-class SlidingWindowTransform : public UntrainableMetaTransform
+class SlidingWindowTransform : public UntrainableTransform
 {
     Q_OBJECT
 
@@ -46,19 +46,12 @@ class SlidingWindowTransform : public UntrainableMetaTransform
 
     void project(const Template &src, Template &dst) const
     {
-        TemplateList temp;
-        project(TemplateList() << src, temp);
-        if (!temp.isEmpty()) dst = temp.first();
-    }
-
-    void project(const TemplateList &src, TemplateList &dst) const
-    {
         if (src.size() != 1)
             qFatal("Sliding Window only supports templates with 1 mat");
 
-        //dst = src;
+        dst = src;
 
-        const Mat m = src.first().m();
+        const Mat m = src.m();
 
         int effectiveMaxSize = maxSize;
         if (maxSize < 0)
@@ -74,19 +67,18 @@ class SlidingWindowTransform : public UntrainableMetaTransform
             const int step = scale < 1. ? 4 : 8;
             for (int y = 0; y < (scaledImage.rows - winHeight); y += step) {
                 for (int x = 0; x < (scaledImage.cols - winWidth); x += step) {
-                    //Template u(src.file, scaledImage(Rect(x, y, winWidth, winHeight))), t;
-                    //transform->project(u, t);
-                    Template u(src.first().file, scaledImage);
-                    u.file.appendRect(Rect(x, y, winWidth, winHeight));
-                    dst.append(u);
-                    //float confidence = t.m().at<float>(0,0);
-                    //if (confidence > threshold) {
-                    //    dst.file.appendRect(Rect(qRound(x/scale), qRound(y/scale), qRound(winWidth/scale), qRound(winHeight/scale)));
-                    //    confidences.append(confidence);
-                    //}
+                    Mat window(scaledImage, Rect(x, y, winWidth, winHeight));
+                    Template u(src.file, window), t;
+                    transform->project(u, t);
+
+                    float confidence = t.m().at<float>(0,0);
+                    if (confidence > threshold) {
+                        dst.file.appendRect(Rect(qRound(x/scale), qRound(y/scale), qRound(winWidth/scale), qRound(winHeight/scale)));
+                        confidences.append(confidence);
+                    }
                 }
             }
-            //dst.file.setList<float>("Confidences", confidences);
+            dst.file.setList<float>("Confidences", confidences);
         }
     }
 };
