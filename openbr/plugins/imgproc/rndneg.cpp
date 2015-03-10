@@ -70,4 +70,4 @@ BR_REGISTER(Transform, RndNegTransform)
 
 } // namespace br
 
-#include "imgproc/rndregion.moc"
+#include "imgproc/rndneg.moc"
