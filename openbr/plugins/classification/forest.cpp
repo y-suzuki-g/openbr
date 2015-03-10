@@ -145,7 +145,7 @@ protected:
                                forestAccuracy,
                                termCrit));
 
-        if (Globals->verbose) {
+        if (true/*Globals->verbose*/) {
             qDebug() << "Number of trees:" << forest.get_tree_count();
 
             if (classification) {

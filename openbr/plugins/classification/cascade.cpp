@@ -32,6 +32,7 @@ class CascadeClassifierTransform : public Transform
         QList<Mat> images;
         foreach (const Template &t, data)
             images.append(t);
+
         QList<float> labels = File::get<float>(data, "Label");
 
         const int numPos = labels.count(1.0f);

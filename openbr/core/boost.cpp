@@ -43,7 +43,7 @@ void CascadeBoostParams::load(QDataStream &stream)
 
 //-------------------------------- CascadeBoostTree ----------------------------------------
 
-static void buildSimpleTree( CascadeBoostNode *node, CvDTreeNode *other_node )
+static void buildSimpleTree(CascadeBoostNode *node, CvDTreeNode *other_node)
 {
     node->value = other_node->value;
     node->hasChildren = (other_node->left ? true : false);
@@ -57,14 +57,16 @@ static void buildSimpleTree( CascadeBoostNode *node, CvDTreeNode *other_node )
     }
 }
 
-bool CascadeBoostTree::train(CvDTreeTrainData *trainData, const CvMat *subsample_idx,
-                                CvBoost *ensemble)
+bool CascadeBoostTree::train(CvDTreeTrainData *trainData, const CvMat *subsample_idx, CvBoost *ensemble)
 {
+    qDebug("0");
     if (!CvBoostTree::train( trainData, subsample_idx, ensemble ))
         return false;
-
+    qDebug("1");
     simple_root = new CascadeBoostNode;
+    qDebug("2");
     buildSimpleTree(simple_root, root);
+    qDebug("3");
     return true;
 }
 
@@ -74,15 +76,15 @@ float CascadeBoostTree::predict(const cv::Mat &img , bool isPrecalc) const
     if ( !node )
         CV_Error( CV_StsError, "tree has not been trained yet" );
 
-    while ( node->hasChildren )
+    while (node->hasChildren)
     {
-        float val = isPrecalc ? img.at<float>(node->feature_idx) : rep->evaluate( img, QList<int>() << node->feature_idx ).at<float>(0);
+        float val = isPrecalc ? img.at<float>(node->feature_idx) : rep->evaluate(img, QList<int>() << node->feature_idx).at<float>(0);
         node = val <= node->threshold ? node->left : node->right;
     }
     return node->value;
 }
 
-static void storeNodeRecursive( CascadeBoostNode *node, QDataStream &stream )
+static void storeNodeRecursive(CascadeBoostNode *node, QDataStream &stream)
 {
     stream << node->value;
     stream << node->hasChildren;
@@ -96,10 +98,10 @@ static void storeNodeRecursive( CascadeBoostNode *node, QDataStream &stream )
 
 void CascadeBoostTree::store( QDataStream &stream ) const
 {
-    storeNodeRecursive( simple_root, stream );
+    storeNodeRecursive(simple_root, stream);
 }
 
-static void loadNodeRecursive( CascadeBoostNode *node, QDataStream &stream)
+static void loadNodeRecursive(CascadeBoostNode *node, QDataStream &stream)
 {
     stream >> node->value;
     stream >> node->hasChildren;
@@ -119,7 +121,7 @@ void CascadeBoostTree::load(QDataStream &stream )
     loadNodeRecursive( simple_root, stream );
 }
 
-static void freeNodeRecursive( CascadeBoostNode *node )
+static void freeNodeRecursive(CascadeBoostNode *node)
 {
     if (node->hasChildren) {
         freeNodeRecursive(node->left);
@@ -142,6 +144,24 @@ void CascadeBoostTree::freeOldData()
 
 //----------------------------------- CascadeBoost --------------------------------------
 
+CascadeBoost::CascadeBoost()
+{
+    data = 0;
+    weak = 0;
+    default_model_name = "br_boost_tree";
+
+    active_vars = active_vars_abs = orig_response = sum_response = weak_eval =
+        subsample_mask = weights = subtree_weights = 0;
+    have_active_cat_vars = have_subsample = false;
+
+    clear();
+}
+
+CascadeBoost::~CascadeBoost()
+{
+    freeTrees();
+}
+
 bool CascadeBoost::train( Mat &_data, const Mat &_labels, const CascadeBoostParams& _params, Representation *rep )
 {
     CV_Assert( !data );
@@ -154,36 +174,35 @@ bool CascadeBoost::train( Mat &_data, const Mat &_labels, const CascadeBoostPara
     _oldLabels = labels;
     data = new CvDTreeTrainData(&_oldData, CV_ROW_SAMPLE, &_oldLabels, NULL, NULL, NULL, NULL, _params, true, true);
 
-    set_params( _params );
-    if ( (_params.boost_type == LOGIT) || (_params.boost_type == GENTLE) )
+    set_params(_params);
+    if ((_params.boost_type == LOGIT) || (_params.boost_type == GENTLE))
         data->do_responses_copy();
 
-    update_weights( 0 );
+    update_weights(0);
 
     cout << "+----+---------+---------+" << endl;
     cout << "|  N |    HR   |    FA   |" << endl;
     cout << "+----+---------+---------+" << endl;
 
-    do
-    {
-        CascadeBoostTree* tree = new CascadeBoostTree( rep );
-        if( !tree->train( data, subsample_mask, this ) )
+    do {
+        CascadeBoostTree* tree = new CascadeBoostTree(rep);
+        if (!tree->train(data, subsample_mask, this))
         {
             delete tree;
             break;
         }
 
         classifiers.append(tree);
-        update_weights( tree );
+        update_weights(tree);
         trim_weights();
         tree->freeOldData(); // releases old root after updating weights
 
-        if( cvCountNonZero(subsample_mask) == 0 )
+        if (cvCountNonZero(subsample_mask) == 0)
             break;
     }
-    while( !isErrDesired() && (classifiers.size() < params.weak_count) );
+    while (!isErrDesired() && (classifiers.size() < params.weak_count));
 
-    if(classifiers.empty()) {
+    if (classifiers.empty()) {
         clear();
         return false;
     }
@@ -194,7 +213,7 @@ bool CascadeBoost::train( Mat &_data, const Mat &_labels, const CascadeBoostPara
     return true;
 }
 
-float CascadeBoost::predict( const Mat &img, bool applyThreshold, bool isPrecalc ) const
+float CascadeBoost::predict(const Mat &img, bool applyThreshold, bool isPrecalc) const
 {
     double sum = 0;
     foreach (const CascadeBoostTree *classifier, classifiers)
@@ -205,7 +224,7 @@ float CascadeBoost::predict( const Mat &img, bool applyThreshold, bool isPrecalc
     return (float)sum;
 }
 
-bool CascadeBoost::set_params( const CvBoostParams& _params )
+bool CascadeBoost::set_params(const CvBoostParams &_params)
 {
     minTAR = ((CascadeBoostParams&)_params).minTAR;
     maxFAR = ((CascadeBoostParams&)_params).maxFAR;
@@ -219,8 +238,8 @@ bool CascadeBoost::isErrDesired()
     int sampleCount = data->sample_count;
     QList<float> responses;
 
-    for( int i = 0; i < sampleCount; i++ )
-        if( labels.at<float>(i) == 1.0F )
+    for (int i = 0; i < sampleCount; i++)
+        if (labels.at<float>(i) == 1.0F)
             responses.append(predict( trainData.row(i), false, true));
     sort(responses.begin(), responses.end());
 
@@ -230,15 +249,15 @@ bool CascadeBoost::isErrDesired()
     threshold = responses[thresholdIdx];
 
     int numTrueAccepts = numPos - thresholdIdx;
-    for( int i = thresholdIdx - 1; i >= 0; i--) // add pos values lower than the threshold that have the same response
-        if ( responses[i] - threshold > -FLT_EPSILON )
+    for (int i = thresholdIdx - 1; i >= 0; i--) // add pos values lower than the threshold that have the same response
+        if (responses[i] - threshold > -FLT_EPSILON)
             numTrueAccepts++;
     float TAR = ((float) numTrueAccepts) / ((float) numPos);
 
     int numFalseAccepts = 0;
-    for( int i = 0; i < sampleCount; i++ )
-        if( labels.at<float>(i) == 0.0F )
-            if( predict( trainData.row(i), true, true) > -FLT_EPSILON)
+    for (int i = 0; i < sampleCount; i++)
+        if (labels.at<float>(i) == 0.0F)
+            if (predict( trainData.row(i), true, true) > -FLT_EPSILON)
                 numFalseAccepts++;
     float FAR = ((float) numFalseAccepts) / ((float) numNeg);
 
@@ -257,9 +276,9 @@ void CascadeBoost::freeTrees()
         classifiers[i]->freeTree();
 }
 
-void CascadeBoost::store( QDataStream &stream ) const
+void CascadeBoost::store(QDataStream &stream) const
 {
-    ((CascadeBoostParams&)params).store( stream );
+    ((CascadeBoostParams&)params).store(stream);
 
     stream << classifiers.size();
     stream << threshold;
@@ -273,15 +292,15 @@ void CascadeBoost::load(Representation *rep, QDataStream &stream )
     clear();
     classifiers.clear();
 
-    ((CascadeBoostParams&)params).load( stream );
+    ((CascadeBoostParams&)params).load(stream);
 
     int numTrees;
     stream >> numTrees;
     stream >> threshold;
 
     for (int i = 0; i < numTrees; i++) {
-        CascadeBoostTree *classifier = new CascadeBoostTree( rep );
-        classifier->load( stream );
+        CascadeBoostTree *classifier = new CascadeBoostTree(rep);
+        classifier->load(stream);
         classifiers.append(classifier);
     }
 }

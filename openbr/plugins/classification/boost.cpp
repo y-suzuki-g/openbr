@@ -47,7 +47,7 @@ public:
 
         boost.clear(); // clear old data if necessary
 
-        Mat data = images2FV(images);
+        Mat data; images2FV(images, data);
         Mat _labels = OpenCVUtils::toMat(labels, 1);
 
         CascadeBoostParams params(boostType, maxWeakCount, trimRate, maxDepth, minTAR, maxFAR);
@@ -83,16 +83,15 @@ private:
         featureVector.copyTo(data.row(idx));
     }
 
-    Mat images2FV(const QList<Mat> &images)
+    void images2FV(const QList<Mat> &images, Mat &data)
     {
         qDebug() << "Converting images to feature vectors...";
-        Mat data(images.size(), representation->numFeatures(), CV_32F);
+        data.create(images.size(), representation->numFeatures(), CV_32F);
         QFutureSynchronizer<void> futures;
         for (int i = 0; i < images.size(); i++)
             futures.addFuture(QtConcurrent::run(this, &BoostClassifier::parallelEnroll, data, images[i], i));
         futures.waitForFinished();
         qDebug() << "All images have been converted";
-        return data;
     }
 };
 

@@ -52,18 +52,21 @@ protected:
 class CascadeBoost : public CvBoost
 {
 public:
-    bool train( cv::Mat &_data, const cv::Mat &_labels,
-                const CascadeBoostParams& _params, Representation *rep );
-    virtual float predict( const cv::Mat &img , bool applyThreshold = true, bool isPrecalc = false) const;
+    CascadeBoost();
+    ~CascadeBoost();
+
+    bool train(cv::Mat &_data, const cv::Mat &_labels,
+                const CascadeBoostParams& _params, Representation *rep);
+    virtual float predict(const cv::Mat &img , bool applyThreshold = true, bool isPrecalc = false) const;
 
     void freeTrees();
     float getThreshold() const { return threshold; }
 
-    void store( QDataStream &stream ) const;
-    void load( Representation *rep, QDataStream &stream );
+    void store(QDataStream &stream) const;
+    void load(Representation *rep, QDataStream &stream);
 
 protected:
-    virtual bool set_params( const CvBoostParams& _params );
+    virtual bool set_params(const CvBoostParams& _params);
     virtual bool isErrDesired();
 
     QList<CascadeBoostTree *> classifiers;
