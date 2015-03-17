@@ -108,7 +108,10 @@ private:
         if (twoPoints) srcPoints[2] = getThirdAffinePoint(srcPoints[0], srcPoints[1]);
 
         Mat affineTransform = getAffineTransform(srcPoints, dstPoints);
-        warpAffine(src, dst, affineTransform, Size(width, height), method);
+        warpAffine(src, dst, affineTransform, Size(width, height), method, BORDER_REFLECT_101);
+        dst.file.set("Affine_0", OpenCVUtils::fromPoint(dstPoints[0]));
+        dst.file.set("Affine_1", OpenCVUtils::fromPoint(dstPoints[1]));
+        if (!twoPoints) dst.file.set("Affine_2", OpenCVUtils::fromPoint(dstPoints[2]));
         if (storeAffine) {
             QList<float> affineParams;
             for (int i = 0 ; i < 2; i++)
