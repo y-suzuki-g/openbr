@@ -1,3 +1,6 @@
+#include <opencv2/imgproc/imgproc.hpp>
+#include <algorithm>
+
 #include <openbr/plugins/openbr_internal.h>
 #include <openbr/core/opencvutils.h>
 
@@ -7,53 +10,61 @@ using namespace std;
 namespace br
 {
 
-class CascadeClassifierTransform : public Transform
+class CascadeClassifier : public Classifier
 {
     Q_OBJECT
 
-    Q_PROPERTY(QString description READ get_description WRITE set_description RESET reset_description STORED false)
+    Q_PROPERTY(br::Classifier *classifier READ get_classifier WRITE set_classifier RESET reset_classifier STORED false)
+    Q_PROPERTY(int numNeg READ get_numNeg WRITE set_numNeg RESET reset_numNeg STORED false)
     Q_PROPERTY(int numStages READ get_numStages WRITE set_numStages RESET reset_numStages STORED false)
     Q_PROPERTY(float maxFAR READ get_maxFAR WRITE set_maxFAR RESET reset_maxFAR STORED false)
-    Q_PROPERTY(bool returnConfidence READ get_returnConfidence WRITE set_returnConfidence RESET reset_returnConfidence STORED false)
     Q_PROPERTY(bool ROCMode READ get_ROCMode WRITE set_ROCMode RESET reset_ROCMode STORED false)
-    BR_PROPERTY(QString, description, "")
+    BR_PROPERTY(br::Classifier*, classifier, NULL)
+    BR_PROPERTY(int, numNeg, 1000)
     BR_PROPERTY(int, numStages, 20)
     BR_PROPERTY(float, maxFAR, 0.005)
-    BR_PROPERTY(bool, returnConfidence, true)
     BR_PROPERTY(bool, ROCMode, false)
 
     QList<Classifier*> stages;
 
-    void train(const TemplateList &data)
+    bool train(const QList<Mat> &_images, const QList<float> &_labels)
     {
-        if (description.isEmpty())
-            qFatal("Need a classifier description!");
+        if (!classifier)
+            qFatal("Need a classifier!");
 
-        QList<Mat> images;
-        foreach (const Template &t, data)
-            images.append(t);
+        QList<Mat> posImages, negImages, trainingSet;
+        QList<float> labels = _labels;
 
-        QList<float> labels = File::get<float>(data, "Label");
+        for (int i = 0; i < _images.size(); i++)
+            labels[i] == 1 ? posImages.append(_images[i]) : negImages.append(_images[i]);
 
-        const int numPos = labels.count(1.0f);
-        const int numNeg = (int)labels.size() - numPos;
+        for (int i = 0; i < posImages.size(); i++) {
+            Mat resizedPos;
+            resize(posImages[i], resizedPos, windowSize());
+            posImages.replace(i, resizedPos);
+        }
 
         stages.clear();
 
+        trainingSet.append(posImages);
+        labels = QList<float>::fromVector(QVector<float>(posImages.size(), 1));
+        for (int n = 0; n < numNeg; n++) {
+            int idx = rand() % negImages.size();
+            trainingSet.append(getRandomNeg(negImages[idx]));
+            labels.append(0.);
+        }
+
         QDateTime start = QDateTime::currentDateTime();
 
-        for (int i = 0; i < numStages; i++) {
-            qDebug() << "\n===== TRAINING STAGE" << i+1 << "=====";
+        int stageCounter = 0;
+        do
+        {
+            qDebug() << "\n===== TRAINING STAGE" << stageCounter+1 << "=====";
             qDebug() << "<BEGIN";
-
-            printStats(labels, numPos, numNeg);
-
-            Classifier *tempStage = Factory<Classifier>::make("." + description);
-            tempStage->train(images, labels);
-            stages.append(tempStage);
-
-            if (!updateTrainingSet(images, labels, numNeg))
+            Classifier *tempStage = Factory<Classifier>::make("." + classifier->description(true));
+            if (!tempStage->train(trainingSet, labels))
                 break;
+            stages.append(tempStage);
 
             qDebug() << "END>";
 
@@ -65,24 +76,35 @@ class CascadeClassifierTransform : public Transform
             int minutes = (seconds / 60) % 60;
             int seconds_left = seconds % 60;
             qDebug("Training until now has taken %d days %d hours %d minutes and %d seconds", days, hours, minutes, seconds_left);
-        }
+
+            stageCounter++;
+        } while (updateTrainingSet(posImages, negImages, trainingSet, labels) && (stageCounter < numStages));
 
         if (stages.size() == 0)
-            qFatal("Training failed. Check training data");
+            return false;
+        return true;
     }
 
-    void project(const Template &src, Template &dst) const
+    Mat preprocess(const Mat &image) const
     {
-        dst = src;
+        return classifier->preprocess(image);
+    }
 
-        float confidence = classify(src);
+    Size windowSize() const
+    {
+        return classifier->windowSize();
+    }
 
-        if (returnConfidence) {
-            dst.m() = Mat(1, 1, CV_32F);
-            dst.m().at<float>(0,0) = confidence;
-        } else {
-            dst.file.set("Confidence", confidence);
-        }
+    float classify(const Mat &image) const
+    {
+        int i; float val;
+        for (i = 0; i < stages.size(); i++)
+            if ((val = stages[i]->classify(image)) < 0.0f)
+                break;
+
+        if (!ROCMode && i < stages.size())
+            return -1.;
+        return val * i;
     }
 
     void store(QDataStream &stream) const
@@ -96,59 +118,65 @@ class CascadeClassifierTransform : public Transform
     {
         int _numStages;
         stream >> _numStages;
+        qDebug("numStages: %d", numStages);
         for (int i = 0; i < _numStages; i++) {
-            Classifier *tempStage = Factory<Classifier>::make("." + description);
+            Classifier *tempStage = Factory<Classifier>::make("." + classifier->description(true));
             tempStage->load(stream);
             stages.append(tempStage);
         }
     }
 
-private:
-    float classify(const Mat &image) const
+    void finalize()
     {
-        int i; float val;
-        for (i = 0; i < stages.size(); i++)
-            if ((val = stages[i]->classify(image)) < 0.0f)
+
+    }
+
+private:
+    bool updateTrainingSet(const QList<Mat> &posImages, const QList<Mat> &negImages, QList<Mat> &trainingSet, QList<float> &labels)
+    {
+        trainingSet.clear(); labels.clear();
+
+        qDebug() << "Building Training Set...";
+
+        // Collect passed pos
+        foreach (const Mat &pos, posImages)
+            if (classify(pos) > 0.0f) {
+                trainingSet.append(pos);
+                labels.append(1.);
+            }
+
+        qDebug("Pos => %d : %d (%f%%)", trainingSet.size(), posImages.size(), trainingSet.size() / (float)posImages.size());
+
+        // find hard negatives
+        QList<Mat> randomNegs = negImages;
+
+        int checked = 0;
+        for (int n = 0; n < numNeg; n++) {
+            std::random_shuffle(randomNegs.begin(), randomNegs.end());
+            Mat negSample; bool foundNegSample = false;
+            foreach (const Mat &neg, randomNegs)
+                if (getNegSample(negSample, neg, checked)) {
+                    foundNegSample = true;
+                    break;
+                }
+
+            if (!foundNegSample)
                 break;
 
-        if (!ROCMode && i < stages.size())
-            return -1.;
-        return val * i;
-    }
+            trainingSet.append(negSample);
+            labels.append(0.);
 
-    void printStats(QList<float> &labels, int numPos, int numNeg)
-    {
-        float TAR = (float)labels.count(1.0f) / (float)numPos;
-        float FAR = (float)labels.count(0.0f) / (float)numNeg;
-
-        cout << "+----+---------+---------+" << endl;
-        cout << "|  L |  Using  |    %    |" << endl;
-        cout << "+----+---------+---------+" << endl;
-        cout << "| POS|"; cout.width(9); cout << right << labels.count(1.0f) << "|"; cout.width(9); cout << right << TAR << "|" << endl;
-        cout << "| NEG|"; cout.width(9); cout << right << labels.count(0.0f) << "|"; cout.width(9); cout << right << FAR << "|" << endl;
-        cout << "+----+---------+---------+" << endl;
-    }
-
-    bool updateTrainingSet(QList<Mat> &images, QList<float> &labels, int numNeg)
-    {
-        int passedPos = 0, passedNeg = 0, i = 0;
-        while (i < images.size()) {
-            if (classify(images[i]) < 0.0f) {
-                images.removeAt(i);
-                labels.removeAt(i);
-            } else {
-                labels[i] == 0.0f ? passedNeg++ : passedPos++;
-                i++;
-            }
+            printf("Neg => %d : %d\r", n+1, numNeg); std::fflush(stdout);
         }
 
-        if (passedPos == 0 || passedNeg == 0) {
-            qDebug("Unable to update training set. Remaining samples: %d POS and %d NEG", passedPos, passedNeg);
+        if (labels.count(1) == 0 || labels.count(0) < numNeg) {
+            qDebug("Unable to update training set. Remaining samples: %d POS and %d NEG", labels.count(1), labels.count(0));
             qDebug() << "END>";
             return false;
         }
 
-        float FAR = ( (float)passedNeg / (float)numNeg );
+        float FAR = ( (float)numNeg / (float)checked );
+        qDebug("\nAcceptance ratio: %f", FAR);
 
         if (FAR < maxFAR) {
             qDebug("FAR is belowed desired level. Training is finished!");
@@ -157,9 +185,53 @@ private:
         }
         return true;
     }
+
+    Mat getRandomNeg(Mat &image)
+    {
+        Size winSize = windowSize();
+
+        int x = rand() % (image.cols - winSize.width - 1);
+        int y = rand() % (image.rows - winSize.height - 1);
+        int w = qMax(rand() % (image.cols - x), winSize.width);
+        int h = qMax(rand() % (image.rows - y), winSize.height);
+
+        Mat sample = image(Rect(x, y, w, h)), resized;
+        resize(sample, resized, winSize);
+        return resized;
+    }
+
+    bool getNegSample(Mat &sample, const Mat &neg, int &checked) const
+    {
+        Size winSize = windowSize();
+
+        int maxSize = qMax(neg.rows, neg.cols);
+
+        const float scaleFrom = qMin(winSize.width/(float)maxSize, winSize.height/(float)maxSize);
+
+        Mat scaledImage;
+        for (float scale = scaleFrom; scale <= 1.; scale *= 1.2) {
+            resize(neg, scaledImage, Size(), scale, scale);
+
+            const int step = scale < 1. ? 1 : 2;
+            for (int y = 0; y < (scaledImage.rows - winSize.height); y += step) {
+                for (int x = 0; x < (scaledImage.cols - winSize.width); x += step) {
+                    checked++;
+                    if (classify(scaledImage(Rect(Point(x, y), winSize))) > 0.0f) {
+                        Mat img = neg(Rect(qRound(x/scale),
+                                           qRound(y/scale),
+                                           qRound(winSize.width/scale),
+                                           qRound(winSize.height/scale)));
+                        resize(img, sample, winSize);
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
 };
 
-BR_REGISTER(Transform, CascadeClassifierTransform)
+BR_REGISTER(Classifier, CascadeClassifier)
 
 } // namespace br
 

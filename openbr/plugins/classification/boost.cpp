@@ -37,7 +37,7 @@ public:
 
     CascadeBoost boost;
 
-    void train(const QList<Mat> &images, const QList<float> &labels)
+    bool train(const QList<Mat> &images, const QList<float> &labels)
     {
         foreach (float label, labels)
             if (!(label == 1.0f || label == 0.0f))
@@ -51,13 +51,23 @@ public:
         Mat _labels = OpenCVUtils::toMat(labels, 1);
 
         CascadeBoostParams params(boostType, maxWeakCount, trimRate, maxDepth, minTAR, maxFAR);
-        if (!boost.train( data, _labels, params, representation ))
-            qFatal("Unable to train Boosted Classifier");    
+
+        return boost.train( data, _labels, params, representation );
+    }
+
+    Mat preprocess(const Mat &image) const
+    {
+        return representation->preprocess(image);
+    }
+
+    Size windowSize() const
+    {
+        return representation->windowSize();
     }
 
     float classify(const Mat &image) const
     {
-        return boost.predict(representation->preprocess(image));
+        return boost.predict(image);
     }
 
     void store(QDataStream &stream) const
@@ -67,7 +77,7 @@ public:
 
     void load(QDataStream &stream)
     {
-        boost.load( representation, stream );
+        boost.load(representation, stream);
     }
 
     void finalize()
@@ -78,8 +88,7 @@ public:
 private:
     void parallelEnroll(Mat &data, const Mat &sample, int idx)
     {
-        Mat pp = representation->preprocess(sample);
-        Mat featureVector = representation->evaluate(pp);
+        Mat featureVector = representation->evaluate(sample);
         featureVector.copyTo(data.row(idx));
     }
 

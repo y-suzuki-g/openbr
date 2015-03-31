@@ -38,6 +38,8 @@ public:
                         const CvMat* subsample_idx, CvBoost* ensemble );
     virtual float predict( const cv::Mat &img, bool isPrecalc = false ) const;
 
+    float maxVal() const;
+
     void store( QDataStream &stream ) const;
     void load( QDataStream &stream );
 
@@ -73,6 +75,7 @@ protected:
     cv::Mat trainData, labels;
     CvMat _oldData, _oldLabels; // these need to exist for stupid casting reasons
     float threshold;
+    float normFactor;
     float minTAR, maxFAR;
 };
 

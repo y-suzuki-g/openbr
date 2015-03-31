@@ -13,7 +13,7 @@ namespace br
  * "Learning Multi-scale Block Local Binary Patterns for Face Recognition"
  * \author Jordan Cheney \cite JordanCheney
  */
-class MB_LBPRepresentation : public Representation
+class MBLBPRepresentation : public Representation
 {
     Q_OBJECT
 
@@ -29,7 +29,7 @@ class MB_LBPRepresentation : public Representation
                 for (int w = 1; w <= winWidth / 3; w++)
                     for (int h = 1; h <= winHeight / 3; h++)
                         if ((x+3*w <= winWidth) && (y+3*h <= winHeight))
-                            features.append(Feature(x, y, w, h ));
+                            features.append(Feature(x, y, w, h));
     }
 
     Mat preprocess(const Mat &image) const
@@ -41,7 +41,7 @@ class MB_LBPRepresentation : public Representation
 
     Mat evaluate(const Mat &image, const QList<int> &indices) const
     {
-        if (image.rows != winHeight || image.cols != winWidth)
+        if (image.rows != (winHeight + 1) || image.cols != (winWidth + 1))
             qFatal("the image does not match the representation size");
 
         Mat results(1, indices.empty() ? features.size() : indices.size(), CV_32FC1);
@@ -54,6 +54,11 @@ class MB_LBPRepresentation : public Representation
     int numFeatures() const
     {
         return features.size();
+    }
+
+    Size windowSize() const
+    {
+        return Size(winWidth + 1, winHeight + 1);
     }
 
     struct Feature
@@ -89,8 +94,8 @@ class MB_LBPRepresentation : public Representation
     QList<Feature> features;
 };
 
-BR_REGISTER(Representation, MB_LBPRepresentation)
+BR_REGISTER(Representation, MBLBPRepresentation)
 
 } // namespace br
 
-#include "imgproc/mblbp.moc"
+#include "representation/mblbp.moc"

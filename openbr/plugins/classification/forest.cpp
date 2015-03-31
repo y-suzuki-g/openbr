@@ -59,14 +59,12 @@ class ForestTransform : public Transform
 
     void load(QDataStream &stream)
     {
-        forest.load("forest_model.xml");
-        //OpenCVUtils::loadModel(forest,stream);
+        OpenCVUtils::loadModel(forest,stream);
     }
 
     void store(QDataStream &stream) const
     {
-        forest.save("forest_model.xml");
-        //OpenCVUtils::storeModel(forest,stream);
+        OpenCVUtils::storeModel(forest,stream);
     }
 
     void init()
@@ -145,7 +143,7 @@ protected:
                                forestAccuracy,
                                termCrit));
 
-        if (true/*Globals->verbose*/) {
+        if (Globals->verbose) {
             qDebug() << "Number of trees:" << forest.get_tree_count();
 
             if (classification) {
@@ -173,6 +171,142 @@ protected:
 };
 
 BR_REGISTER(Transform, ForestTransform)
+
+/*!
+ * \ingroup classifiers
+ * \brief Wraps OpenCV's random trees framework
+ * \author Scott Klum \cite sklum
+ * \author Jordan Cheney \cite JordanCheney
+ * \brief http://docs.opencv.org/modules/ml/doc/random_trees.html
+ */
+class ForestClassifier : public Classifier
+{
+    Q_OBJECT
+
+    bool train(const QList<Mat> &_images, const QList<float> &_labels)
+    {
+        Mat samples(_images.size(), representation->numFeatures(), CV_32F);
+        for (int i = 0; i < _images.size(); i++)
+            samples.row(i) = representation->evaluate(_images[i]);
+        Mat labels = OpenCVUtils::toMat(_labels);
+
+        Mat types = Mat(samples.cols + 1, 1, CV_8U);
+        types.setTo(Scalar(CV_VAR_NUMERICAL));
+
+        if (classification) {
+            types.at<char>(samples.cols, 0) = CV_VAR_CATEGORICAL;
+        } else {
+            types.at<char>(samples.cols, 0) = CV_VAR_NUMERICAL;
+        }
+
+        bool usePrior = classification && weight;
+        float priors[2];
+        if (usePrior) {
+            int nonZero = countNonZero(labels);
+            priors[0] = 1;
+            priors[1] = (float)(samples.rows-nonZero)/nonZero;
+        }
+
+        int minSamplesForSplit = _images.size()*splitPercentage;
+        bool trained = forest.train( samples, CV_ROW_SAMPLE, labels, Mat(), Mat(), types, Mat(),
+                                       CvRTParams(maxDepth,
+                                                  minSamplesForSplit,
+                                                  0,
+                                                  false,
+                                                  2,
+                                                  usePrior ? priors : 0,
+                                                  false,
+                                                  0,
+                                                  maxTrees,
+                                                  forestAccuracy,
+                                                  termCrit));
+
+        if (Globals->verbose) {
+            qDebug() << "Number of trees:" << forest.get_tree_count();
+
+            if (classification) {
+                QTime timer;
+                timer.start();
+                int correctClassification = 0;
+                float regressionError = 0;
+                for (int i=0; i<samples.rows; i++) {
+                    float prediction = forest.predict_prob(samples.row(i));
+                    int label = forest.predict(samples.row(i));
+                    if (label == labels.at<float>(i,0)) {
+                        correctClassification++;
+                    }
+                    regressionError += fabs(prediction-labels.at<float>(i,0));
+                }
+
+                qDebug("Time to classify %d samples: %d ms\n \
+                       Classification Accuracy: %f\n \
+                       MAE: %f\n \
+                       Sample dimensionality: %d",
+                       samples.rows,timer.elapsed(),(float)correctClassification/samples.rows,regressionError/samples.rows,samples.cols);
+            }
+        }
+        return trained;
+    }
+
+    float classify(const Mat &image) const
+    {
+        if (classification && returnConfidence)
+            return forest.predict_prob(representation->evaluate(image));
+        return forest.predict(representation->evaluate(image));
+    }
+
+    Mat preprocess(const Mat &image) const
+    {
+        return representation->preprocess(image);
+    }
+
+    Size windowSize() const
+    {
+        return representation->windowSize();
+    }
+
+    void load(QDataStream &stream)
+    {
+        OpenCVUtils::loadModel(forest,stream);
+    }
+
+    void store(QDataStream &stream) const
+    {
+        OpenCVUtils::storeModel(forest,stream);
+    }
+
+protected:
+    Q_ENUMS(TerminationCriteria)
+    Q_PROPERTY(br::Representation *representation READ get_representation WRITE set_representation RESET reset_representation STORED false)
+    Q_PROPERTY(bool classification READ get_classification WRITE set_classification RESET reset_classification STORED false)
+    Q_PROPERTY(float splitPercentage READ get_splitPercentage WRITE set_splitPercentage RESET reset_splitPercentage STORED false)
+    Q_PROPERTY(int maxDepth READ get_maxDepth WRITE set_maxDepth RESET reset_maxDepth STORED false)
+    Q_PROPERTY(int maxTrees READ get_maxTrees WRITE set_maxTrees RESET reset_maxTrees STORED false)
+    Q_PROPERTY(float forestAccuracy READ get_forestAccuracy WRITE set_forestAccuracy RESET reset_forestAccuracy STORED false)
+    Q_PROPERTY(bool returnConfidence READ get_returnConfidence WRITE set_returnConfidence RESET reset_returnConfidence STORED false)
+    Q_PROPERTY(bool weight READ get_weight WRITE set_weight RESET reset_weight STORED false)
+    Q_PROPERTY(TerminationCriteria termCrit READ get_termCrit WRITE set_termCrit RESET reset_termCrit STORED false)
+
+public:
+    enum TerminationCriteria { Iter = CV_TERMCRIT_ITER,
+                EPS = CV_TERMCRIT_EPS,
+                Both = CV_TERMCRIT_EPS | CV_TERMCRIT_ITER};
+
+protected:
+    BR_PROPERTY(br::Representation*, representation, NULL)
+    BR_PROPERTY(bool, classification, true)
+    BR_PROPERTY(float, splitPercentage, .01)
+    BR_PROPERTY(int, maxDepth, std::numeric_limits<int>::max())
+    BR_PROPERTY(int, maxTrees, 10)
+    BR_PROPERTY(float, forestAccuracy, .1)
+    BR_PROPERTY(bool, returnConfidence, true)
+    BR_PROPERTY(bool, weight, false)
+    BR_PROPERTY(TerminationCriteria, termCrit, Iter)
+
+    CvRTrees forest;
+};
+
+BR_REGISTER(Classifier, ForestClassifier)
 
 /*!
  * \ingroup transforms

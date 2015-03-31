@@ -59,14 +59,11 @@ static void buildSimpleTree(CascadeBoostNode *node, CvDTreeNode *other_node)
 
 bool CascadeBoostTree::train(CvDTreeTrainData *trainData, const CvMat *subsample_idx, CvBoost *ensemble)
 {
-    qDebug("0");
     if (!CvBoostTree::train( trainData, subsample_idx, ensemble ))
         return false;
-    qDebug("1");
+
     simple_root = new CascadeBoostNode;
-    qDebug("2");
     buildSimpleTree(simple_root, root);
-    qDebug("3");
     return true;
 }
 
@@ -82,6 +79,23 @@ float CascadeBoostTree::predict(const cv::Mat &img , bool isPrecalc) const
         node = val <= node->threshold ? node->left : node->right;
     }
     return node->value;
+}
+
+static void maxValRecursive(CascadeBoostNode *node, float &max)
+{
+    if (node->hasChildren) {
+        maxValRecursive(node->left, max);
+        maxValRecursive(node->right, max);
+    }
+    if (max < fabs(node->value))
+        max = fabs(node->value);
+}
+
+float CascadeBoostTree::maxVal() const
+{
+    float max = -std::numeric_limits<float>::max();
+    maxValRecursive(simple_root, max);
+    return max;
 }
 
 static void storeNodeRecursive(CascadeBoostNode *node, QDataStream &stream)
@@ -192,6 +206,8 @@ bool CascadeBoost::train( Mat &_data, const Mat &_labels, const CascadeBoostPara
             break;
         }
 
+        normFactor = qMax(normFactor, tree->maxVal());
+
         classifiers.append(tree);
         update_weights(tree);
         trim_weights();
@@ -207,6 +223,9 @@ bool CascadeBoost::train( Mat &_data, const Mat &_labels, const CascadeBoostPara
         return false;
     }
 
+    if (!isErrDesired())
+        return false;
+
     data->free_train_data();
     delete data;
 
@@ -217,7 +236,9 @@ float CascadeBoost::predict(const Mat &img, bool applyThreshold, bool isPrecalc)
 {
     double sum = 0;
     foreach (const CascadeBoostTree *classifier, classifiers)
-        sum += classifier->predict( img, isPrecalc );
+        sum += (classifier->predict(img, isPrecalc) / normFactor);
+
+    sum /= classifiers.size();
 
     if (applyThreshold)
         return (float)sum - threshold;
@@ -240,7 +261,7 @@ bool CascadeBoost::isErrDesired()
 
     for (int i = 0; i < sampleCount; i++)
         if (labels.at<float>(i) == 1.0F)
-            responses.append(predict( trainData.row(i), false, true));
+            responses.append(predict(trainData.row(i), false, true));
     sort(responses.begin(), responses.end());
 
     int numPos = responses.size(), numNeg = sampleCount - numPos;

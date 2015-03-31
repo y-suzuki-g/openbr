@@ -177,6 +177,95 @@ private:
 BR_REGISTER(Transform, SVMTransform)
 
 /*!
+ * \ingroup classifiers
+ * \brief C. Burges. "A tutorial on support vector machines for pattern recognition,"
+ * \author Josh Klontz \cite jklontz
+ * \author Jordan Cheney \cite JordanCheney
+ * Knowledge Discovery and Data Mining 2(2), 1998.
+ */
+class SVMClassifier : public Classifier
+{
+    Q_OBJECT
+
+    Q_ENUMS(Kernel)
+    Q_ENUMS(Type)
+
+    Q_PROPERTY(br::Representation *representation READ get_representation WRITE set_representation RESET reset_representation STORED false)
+    Q_PROPERTY(Kernel kernel READ get_kernel WRITE set_kernel RESET reset_kernel STORED false)
+    Q_PROPERTY(Type type READ get_type WRITE set_type RESET reset_type STORED false)
+    Q_PROPERTY(float C READ get_C WRITE set_C RESET reset_C STORED false)
+    Q_PROPERTY(float gamma READ get_gamma WRITE set_gamma RESET reset_gamma STORED false)
+    Q_PROPERTY(int folds READ get_folds WRITE set_folds RESET reset_folds STORED false)
+    Q_PROPERTY(bool balanceFolds READ get_balanceFolds WRITE set_balanceFolds RESET reset_balanceFolds STORED false)
+    Q_PROPERTY(int termCriteria READ get_termCriteria WRITE set_termCriteria RESET reset_termCriteria STORED false)
+    Q_PROPERTY(bool returnDFVal READ get_returnDFVal WRITE set_returnDFVal RESET reset_returnDFVal STORED false)
+
+public:
+    enum Kernel { Linear = CvSVM::LINEAR,
+                  Poly = CvSVM::POLY,
+                  RBF = CvSVM::RBF,
+                  Sigmoid = CvSVM::SIGMOID };
+
+    enum Type { C_SVC = CvSVM::C_SVC,
+                NU_SVC = CvSVM::NU_SVC,
+                ONE_CLASS = CvSVM::ONE_CLASS,
+                EPS_SVR = CvSVM::EPS_SVR,
+                NU_SVR = CvSVM::NU_SVR};
+
+private:
+    BR_PROPERTY(br::Representation*, representation, NULL)
+    BR_PROPERTY(Kernel, kernel, Linear)
+    BR_PROPERTY(Type, type, C_SVC)
+    BR_PROPERTY(float, C, -1)
+    BR_PROPERTY(float, gamma, -1)
+    BR_PROPERTY(int, folds, 5)
+    BR_PROPERTY(bool, balanceFolds, false)
+    BR_PROPERTY(int, termCriteria, 1000)
+    BR_PROPERTY(bool, returnDFVal, false)
+
+    SVM svm;
+
+    bool train(const QList<Mat> &_images, const QList<float> &_labels)
+    {
+        Mat data(_images.size(), representation->numFeatures(), CV_32F);
+        for (int i = 0; i < _images.size(); i++)
+            data.row(i) = representation->evaluate(_images[i]);
+        Mat labels = OpenCVUtils::toMat(_labels);
+
+        trainSVM(svm, data, labels, kernel, type, C, gamma, folds, balanceFolds, termCriteria);
+
+        return true;
+    }
+
+    float classify(const Mat &image) const
+    {
+        return svm.predict(representation->evaluate(image), returnDFVal);
+    }
+
+    Mat preprocess(const Mat &image) const
+    {
+        return representation->preprocess(image);
+    }
+
+    Size windowSize() const
+    {
+        return representation->windowSize();
+    }
+
+    void store(QDataStream &stream) const
+    {
+        OpenCVUtils::storeModel(svm, stream);
+    }
+
+    void load(QDataStream &stream)
+    {
+        OpenCVUtils::loadModel(svm, stream);
+    }
+};
+
+BR_REGISTER(Classifier, SVMClassifier)
+
+/*!
  * \ingroup Distances
  * \brief SVM Regression on template absolute differences.
  * \author Josh Klontz

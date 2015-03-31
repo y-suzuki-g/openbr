@@ -30,7 +30,7 @@ namespace br
  * \author Scott Klum \cite sklum
  * \brief http://docs.opencv.org/modules/ml/doc/neural_networks.html
  */
-class MLPTransform : public MetaTransform
+class MLPTransform : public Transform
 {
     Q_OBJECT
 
@@ -112,6 +112,98 @@ private:
 };
 
 BR_REGISTER(Transform, MLPTransform)
+
+/*!
+ * \ingroup classifiers
+ * \brief Wraps OpenCV's multi-layer perceptron framework
+ * \author Scott Klum \cite sklum
+ * \author Jordan Cheney \cite JordanCheney
+ * \brief http://docs.opencv.org/modules/ml/doc/neural_networks.html
+ */
+class MLPClassifier : public Classifier
+{
+    Q_OBJECT
+
+    Q_ENUMS(Kernel)
+
+    Q_PROPERTY(br::Representation *representation READ get_representation WRITE set_representation RESET reset_representation STORED false)
+    Q_PROPERTY(Kernel kernel READ get_kernel WRITE set_kernel RESET reset_kernel STORED false)
+    Q_PROPERTY(float alpha READ get_alpha WRITE set_alpha RESET reset_alpha STORED false)
+    Q_PROPERTY(float beta READ get_beta WRITE set_beta RESET reset_beta STORED false)
+    Q_PROPERTY(QList<int> hiddenLayerNeurons READ get_hiddenLayerNeurons WRITE set_hiddenLayerNeurons RESET reset_hiddenLayerNeurons STORED false)
+
+public:
+
+    enum Kernel { Identity = CvANN_MLP::IDENTITY,
+                  Sigmoid = CvANN_MLP::SIGMOID_SYM,
+                  Gaussian = CvANN_MLP::GAUSSIAN};
+
+private:
+    BR_PROPERTY(br::Representation*, representation, NULL)
+    BR_PROPERTY(Kernel, kernel, Sigmoid)
+    BR_PROPERTY(float, alpha, 1)
+    BR_PROPERTY(float, beta, 1)
+    BR_PROPERTY(QList<int>, hiddenLayerNeurons, QList<int>()) // Number of neurons in the middle layers
+
+    CvANN_MLP mlp;
+
+    void init()
+    {
+        if (kernel == Gaussian)
+            qWarning("The OpenCV documentation warns that the Gaussian kernel, \"is not completely supported at the moment\"");
+
+        Mat layers = Mat(hiddenLayerNeurons.size() + 2, 1, CV_32SC1);
+        layers.row(0) = representation->numFeatures();
+        layers.row(layers.rows - 1) = 1;
+        for (int i=0; i<hiddenLayerNeurons.size(); i++)
+            layers.at<int>(i+1) = hiddenLayerNeurons[i];
+
+        mlp.create(layers, kernel, alpha, beta);
+    }
+
+    bool train(const QList<Mat> &_images, const QList<float> &_labels)
+    {
+        Mat data(_images.size(), representation->numFeatures(), CV_32F);
+        for (int i = 0; i < _images.size(); i++)
+            data.row(i) = representation->evaluate(_images[i]);
+        Mat labels = OpenCVUtils::toMat(_labels);
+
+        int iterations = mlp.train(data,labels,Mat());
+
+        if (iterations == 0)
+            return false;
+        return true;
+    }
+
+    float classify(const Mat &image) const
+    {
+        Mat response(1, 1, CV_32FC1);
+        mlp.predict(representation->evaluate(image), response);
+        return response.at<float>(0, 0);
+    }
+
+    Mat preprocess(const Mat &image) const
+    {
+        return representation->preprocess(image);
+    }
+
+    Size windowSize() const
+    {
+        return representation->windowSize();
+    }
+
+    void load(QDataStream &stream)
+    {
+        OpenCVUtils::loadModel(mlp, stream);
+    }
+
+    void store(QDataStream &stream) const
+    {
+        OpenCVUtils::storeModel(mlp, stream);
+    }
+};
+
+BR_REGISTER(Classifier, MLPClassifier)
 
 } // namespace br
 

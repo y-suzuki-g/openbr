@@ -761,10 +761,13 @@ static QStringList computeDetectionResults(const QList<ResolvedDetection> &detec
         }
         if ((i == detections.size()-1) || (detection.confidence > detections[i+1].confidence)) {
             if (FP > prevFP || (i == detections.size()-1)) {
-                if (prevFP / numImages < 0.1 && FP / numImages > 0.1 && discrete) {
+                if ((prevFP / numImages) < 1 && (FP / numImages) >= 1 && discrete) {
+                    qDebug("TAR @ FAR => %f : 1", TP / totalTrueDetections);
+                    qDebug("Confidence: %f", detection.confidence);
+                } else if ((prevFP / numImages) < 0.1 && (FP / numImages >= 0.1) && discrete) {
                     qDebug("TAR @ FAR => %f : 0.1", TP / totalTrueDetections);
                     qDebug("Confidence: %f", detection.confidence);
-                } else if (prevFP / numImages < 0.01 && FP / numImages > 0.01 && discrete) {
+                } else if ((prevFP / numImages) < 0.01 && (FP / numImages >= 0.01) && discrete) {
                     qDebug("TAR @ FAR => %f : 0.01", TP / totalTrueDetections);
                     qDebug("Confidence: %f", detection.confidence);
                 }
@@ -774,7 +777,7 @@ static QStringList computeDetectionResults(const QList<ResolvedDetection> &detec
         }
     }
 
-    const int keep = qMin(points.size(), Max_Points);
+    const int keep = points.size(); //qMin(points.size(), Max_Points);
     if (keep < 1) qFatal("Insufficient points.");
 
     QStringList lines; lines.reserve(keep);

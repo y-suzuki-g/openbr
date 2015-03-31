@@ -1386,6 +1386,15 @@ private:
         { (void) targetGallery; (void) queryGallery; (void) output; return false; }
 };
 
+/*!
+ * \defgroup representations Representations
+ * \brief Plugins that represent images as feature vectors.
+ */
+
+/*!
+ * \ingroup representations
+ * \brief Plugin base class for converting images to feature vectors.
+ */
 class BR_EXPORT Representation : public Object
 {
     Q_OBJECT
@@ -1399,9 +1408,19 @@ public:
     // By convention, an empty indices list will result in all feature responses being calculated
     // and returned.
     virtual cv::Mat evaluate(const cv::Mat &image, const QList<int> &indices = QList<int>()) const = 0;
+    virtual cv::Size windowSize() const = 0;
     virtual int numFeatures() const = 0;
 };
 
+/*!
+ * \defgroup classifiers Classifiers
+ * \brief Plugins that classify images.
+ */
+
+/*!
+ * \ingroup classifiers
+ * \brief Plugin base class for classifying images.
+ */
 class BR_EXPORT Classifier : public Object
 {
     Q_OBJECT
@@ -1410,7 +1429,9 @@ public:
     virtual ~Classifier() {}
 
     static Classifier *make(QString str, QObject *parent); /*!< \brief Make a classifier from a string. */
-    virtual void train(const QList<cv::Mat> &images, const QList<float> &labels) = 0;
+    virtual bool train(const QList<cv::Mat> &images, const QList<float> &labels) = 0;
+    virtual cv::Mat preprocess(const cv::Mat &image) const = 0;
+    virtual cv::Size windowSize() const = 0;
     // By convention, classify should return a value normalized such that the threshold is 0. Negative values
     // can be interpreted as a negative classification and positive values as a positive classification.
     virtual float classify(const cv::Mat &image) const = 0;

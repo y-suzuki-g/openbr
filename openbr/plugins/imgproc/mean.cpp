@@ -27,31 +27,39 @@ namespace br
  * \note Suitable for visualization only as it sets every projected template to the mean template.
  * \author Scott Klum \cite sklum
  */
-class MeanTransform : public Transform
+class MeanTransform : public TimeVaryingTransform
 {
     Q_OBJECT
 
     Mat mean;
+    int count;
 
-    void train(const TemplateList &data)
+public:
+    MeanTransform() : TimeVaryingTransform(false, false) {}
+
+private:
+    void projectUpdate(const TemplateList &src, TemplateList &dst)
     {
-        mean = Mat::zeros(data[0].m().rows,data[0].m().cols,CV_32F);
+        if (mean.empty()) mean = Mat::zeros(src.first().m().rows, src.first().m().cols, CV_32F);
 
-        for (int i = 0; i < data.size(); i++) {
+        (void) dst;
+
+        foreach (const Template &t, src) {
             Mat converted;
-            data[i].m().convertTo(converted, CV_32F);
+            t.m().convertTo(converted, CV_32F);
             mean += converted;
         }
 
-        mean /= data.size();
+        count += src.size();
     }
 
-    void project(const Template &src, Template &dst) const
+    void finalize(TemplateList &output)
     {
-        dst = src;
-        dst.m() = mean;
+        mean /= count;
+        Template t(File(), mean);
+        output.clear();
+        output.append(t);
     }
-
 };
 
 BR_REGISTER(Transform, MeanTransform)

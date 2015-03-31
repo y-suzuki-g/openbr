@@ -54,6 +54,7 @@ class PCATransform : public Transform
     Q_OBJECT
     friend class DFFSTransform;
     friend class LDATransform;
+    friend class LDAClassifier;
 
 protected:
     Q_PROPERTY(float keep READ get_keep WRITE set_keep RESET reset_keep STORED false)
@@ -553,6 +554,269 @@ class LDATransform : public Transform
 };
 
 BR_REGISTER(Transform, LDATransform)
+
+/*!
+ * \ingroup transforms
+ * \brief Projects input into learned Linear Discriminant Analysis subspace.
+ * \author Brendan Klare \cite bklare
+ * \author Josh Klontz \cite jklontz
+ */
+class LDAClassifier : public Classifier
+{
+    friend class SparseLDATransform;
+
+    Q_OBJECT
+
+    Q_PROPERTY(br::Representation *representation READ get_representation WRITE set_representation RESET reset_representation STORED false)
+    Q_PROPERTY(float pcaKeep READ get_pcaKeep WRITE set_pcaKeep RESET reset_pcaKeep STORED false)
+    Q_PROPERTY(bool pcaWhiten READ get_pcaWhiten WRITE set_pcaWhiten RESET reset_pcaWhiten STORED false)
+    Q_PROPERTY(int directLDA READ get_directLDA WRITE set_directLDA RESET reset_directLDA STORED false)
+    Q_PROPERTY(float directDrop READ get_directDrop WRITE set_directDrop RESET reset_directDrop STORED false)
+    Q_PROPERTY(bool isBinary READ get_isBinary WRITE set_isBinary RESET reset_isBinary STORED false)
+    Q_PROPERTY(bool normalize READ get_normalize WRITE set_normalize RESET reset_normalize STORED false)
+    BR_PROPERTY(br::Representation*, representation, NULL)
+    BR_PROPERTY(float, pcaKeep, 0.98)
+    BR_PROPERTY(bool, pcaWhiten, false)
+    BR_PROPERTY(int, directLDA, 0)
+    BR_PROPERTY(float, directDrop, 0.1)
+    BR_PROPERTY(bool, isBinary, false)
+    BR_PROPERTY(bool, normalize, true)
+
+    int dimsOut;
+    Eigen::VectorXf mean;
+    Eigen::MatrixXf projection;
+    float stdDev;
+
+    bool train(const QList<cv::Mat> &_images, const QList<float> &_labels)
+    {
+        // creates "Label"
+        TemplateList trainingSet;
+        for (int i = 0; i < _images.size(); i++) {
+            Template t(representation->evaluate(_images[i]));
+            t.file.set("Label", (int)_labels[i]);
+            trainingSet.append(t);
+        }
+        int instances = _images.size();
+
+        // Perform PCA dimensionality reduction
+        PCATransform pca;
+        pca.keep = pcaKeep;
+        pca.whiten = pcaWhiten;
+        pca.train(trainingSet);
+        mean = pca.mean;
+
+        TemplateList ldaTrainingSet;
+        static_cast<Transform*>(&pca)->project(trainingSet, ldaTrainingSet);
+
+        int dimsIn = ldaTrainingSet.first().m().rows * ldaTrainingSet.first().m().cols;
+
+        // OpenBR ensures that class values range from 0 to numClasses-1.
+        // Label exists because we created it earlier with relabel
+        QList<int> classes = File::get<int>(trainingSet, "Label");
+        QMap<int, int> classCounts = trainingSet.countValues<int>("Label");
+        const int numClasses = classCounts.size();
+
+        // Map Eigen into OpenCV
+        Eigen::MatrixXd data = Eigen::MatrixXd(dimsIn, instances);
+        for (int i=0; i<instances; i++)
+            data.col(i) = Eigen::Map<const Eigen::MatrixXf>(ldaTrainingSet[i].m().ptr<float>(), dimsIn, 1).cast<double>();
+
+        // Removing class means
+        Eigen::MatrixXd classMeans = Eigen::MatrixXd::Zero(dimsIn, numClasses);
+        for (int i=0; i<instances; i++)  classMeans.col(classes[i]) += data.col(i);
+        for (int i=0; i<numClasses; i++) classMeans.col(i) /= classCounts[i];
+        for (int i=0; i<instances; i++)  data.col(i) -= classMeans.col(classes[i]);
+
+        PCATransform space1;
+
+        if (!directLDA)
+        {
+            // The number of LDA dimensions is limited by the degrees
+            // of freedom of scatter matrix computed from 'data'. Because
+            // the mean of each class is removed (lowering degree of freedom
+            // one per class), the total rank of the covariance/scatter
+            // matrix that will be computed in PCA is bound by instances - numClasses.
+            space1.keep = std::min(dimsIn, instances-numClasses);
+            space1.trainCore(data);
+
+            // Divide each eigenvector by sqrt of eigenvalue.
+            // This has the effect of whitening the within-class scatter.
+            // In effect, this minimizes the within-class variation energy.
+            for (int i=0; i<space1.keep; i++) space1.eVecs.col(i) /= pow((double)space1.eVals(i),0.5);
+        }
+        else if (directLDA == 2)
+        {
+            space1.drop = instances - numClasses;
+            space1.keep = std::min(dimsIn, instances) - space1.drop;
+            space1.trainCore(data);
+        }
+        else
+        {
+            // Perform (modified version of) Direct LDA
+
+            // Direct LDA uses to the Null space of the within-class scatter.
+            // Thus, the lower rank, is used to our benefit. We are not discarding
+            // these vectors now (in non-direct code we use the keep parameter
+            // to discard Null space). We keep the Null space b/c this is where
+            // the within-class scatter goes to zero, i.e. it is very useful.
+            space1.keep = dimsIn;
+            space1.trainCore(data);
+
+            if (dimsIn > instances - numClasses) {
+                // Here, we are replacing the eigenvalue of the  null space
+                // eigenvectors with the eigenvalue (divided by 2) of the
+                // smallest eigenvector from the row space eigenvector.
+                // This allows us to scale these null-space vectors (otherwise
+                // it is a divide by zero.
+                double null_eig = space1.eVals(instances - numClasses - 1) / 2;
+                for (int i = instances - numClasses; i < dimsIn; i++)
+                    space1.eVals(i) = null_eig;
+            }
+
+            // Drop the first few leading eigenvectors in the within-class space
+            QList<float> eVal_list; eVal_list.reserve(dimsIn);
+            float fmax = -1;
+            for (int i=0; i<dimsIn; i++) fmax = std::max(fmax, space1.eVals(i));
+            for (int i=0; i<dimsIn; i++) eVal_list.append(space1.eVals(i)/fmax);
+
+            QList<float> dSum = Common::CumSum(eVal_list);
+            int drop_idx;
+            for (drop_idx = 0; drop_idx<dimsIn; drop_idx++)
+                if (dSum[drop_idx]/dSum[dimsIn-1] >= directDrop)
+                    break;
+
+            drop_idx++;
+            space1.keep = dimsIn - drop_idx;
+
+            Eigen::MatrixXf new_vecs = Eigen::MatrixXf(space1.eVecs.rows(), (int)space1.keep);
+            Eigen::MatrixXf new_vals = Eigen::MatrixXf((int)space1.keep, 1);
+
+            for (int i = 0; i < space1.keep; i++) {
+                new_vecs.col(i) = space1.eVecs.col(i + drop_idx);
+                new_vals(i) = space1.eVals(i + drop_idx);
+            }
+
+            space1.eVecs = new_vecs;
+            space1.eVals = new_vals;
+
+            // We will call this "agressive" whitening. Really, it is not whitening
+            // anymore. Instead, we are further scaling the small eigenvalues and the
+            // null space eigenvalues (to increase their impact).
+            for (int i=0; i<space1.keep; i++) space1.eVecs.col(i) /= pow((double)space1.eVals(i),0.15);
+        }
+
+        // Now we project the mean class vectors into this second
+        // subspace that minimizes the within-class scatter energy.
+        // Inside this subspace we learn a subspace projection that
+        // maximizes the between-class scatter energy.
+        Eigen::MatrixXd mean2 = Eigen::MatrixXd::Zero(dimsIn, 1);
+
+        // Remove means
+        for (int i=0; i<dimsIn; i++)     mean2(i) = classMeans.row(i).sum() / numClasses;
+        for (int i=0; i<numClasses; i++) classMeans.col(i) -= mean2;
+
+        // Project into second subspace
+        Eigen::MatrixXd data2 = space1.eVecs.transpose().cast<double>() * classMeans;
+
+        // The rank of the between-class scatter matrix is bound by numClasses - 1
+        // because each class is a vector used to compute the covariance,
+        // but one degree of freedom is lost removing the global mean.
+        int dim2 = std::min((int)space1.keep, numClasses-1);
+        PCATransform space2;
+        space2.keep = dim2;
+        space2.trainCore(data2);
+
+        // Compute final projection matrix
+        projection = ((space2.eVecs.transpose() * space1.eVecs.transpose()) * pca.eVecs.transpose()).transpose();
+        dimsOut = dim2;
+
+        stdDev = 1; // default initialize
+        if (isBinary) {
+            qDebug("isBinary");
+            assert(dimsOut == 1);
+            float posVal = 0;
+            float negVal = 0;
+            Eigen::MatrixXf results(trainingSet.size(),1);
+            for (int i = 0; i < trainingSet.size(); i++) {
+                float response = classify(trainingSet[i]);
+
+                //Note: the positive class is assumed to be 0 b/c it will
+                // typically be the first gallery template in the TemplateList structure
+                if (classes[i] == 0)
+                    posVal += response;
+                else if (classes[i] == 1)
+                    negVal += response;
+                else
+                    qFatal("Binary mode only supports two class problems.");
+                results(i) = response;  //used for normalization
+            }
+            posVal /= classCounts[0];
+            negVal /= classCounts[1];
+
+            if (posVal < negVal) {
+                //Ensure positive value is supposed to be > 0 after projection
+                Eigen::MatrixXf invert = Eigen::MatrixXf::Ones(dimsIn,1);
+                invert *= -1;
+                projection = invert.transpose() * projection;
+            }
+
+            if (normalize)
+                stdDev = sqrt(results.array().square().sum() / trainingSet.size());
+        }
+        return true;
+    }
+
+    float classify(const cv::Mat &image) const
+    {
+        cv::Mat dst(1, dimsOut, CV_32FC1);
+
+        // Map Eigen into OpenCV
+        Eigen::Map<Eigen::MatrixXf> inMap((float*)representation->evaluate(image).ptr<float>(), image.rows*image.cols, 1);
+        Eigen::Map<Eigen::MatrixXf> outMap(dst.ptr<float>(), dimsOut, 1);
+
+        // Do projection
+        outMap = projection.transpose() * (inMap - mean);
+        if (normalize)
+            return dst.at<float>(0,0) / stdDev;
+        return dst.at<float>(0,0);
+    }
+
+    cv::Mat preprocess(const cv::Mat &image) const
+    {
+        return representation->preprocess(image);
+    }
+
+    cv::Size windowSize() const
+    {
+        return representation->windowSize();
+    }
+
+    void store(QDataStream &stream) const
+    {
+        stream << pcaKeep;
+        stream << directLDA;
+        stream << directDrop;
+        stream << dimsOut;
+        stream << mean;
+        stream << projection;
+        if (normalize && isBinary)
+            stream << stdDev;
+    }
+
+    void load(QDataStream &stream)
+    {
+        stream >> pcaKeep;
+        stream >> directLDA;
+        stream >> directDrop;
+        stream >> dimsOut;
+        stream >> mean;
+        stream >> projection;
+        if (normalize && isBinary)
+            stream >> stdDev;
+    }
+};
+
+BR_REGISTER(Classifier, LDAClassifier)
 
 /*!
  * \ingroup transforms

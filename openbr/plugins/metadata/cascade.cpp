@@ -15,6 +15,7 @@
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 #include <QProcess>
 #include <QTemporaryFile>
+#include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/objdetect/objdetect.hpp>
 
 #include <openbr/plugins/openbr_internal.h>
@@ -194,7 +195,7 @@ private:
  * \author Josh Klontz \cite jklontz
  * \author David Crouse \cite dgcrouse
  */
-class CascadeTransform : public MetaTransform
+class CascadeTransform : public Transform
 {
     Q_OBJECT
     Q_PROPERTY(QString model READ get_model WRITE set_model RESET reset_model STORED false)
@@ -202,7 +203,8 @@ class CascadeTransform : public MetaTransform
     Q_PROPERTY(float scaleFactor READ get_scaleFactor WRITE set_scaleFactor RESET reset_scaleFactor STORED false)
     Q_PROPERTY(int minNeighbors READ get_minNeighbors WRITE set_minNeighbors RESET reset_minNeighbors STORED false)
     Q_PROPERTY(bool ROCMode READ get_ROCMode WRITE set_ROCMode RESET reset_ROCMode STORED false)
-    
+    Q_PROPERTY(float threshold READ get_threshold WRITE set_threshold RESET reset_threshold STORED false)
+
     // Training parameters 
     Q_PROPERTY(int numStages READ get_numStages WRITE set_numStages RESET reset_numStages STORED false) 
     Q_PROPERTY(int w READ get_w WRITE set_w RESET reset_w STORED false)
@@ -228,7 +230,8 @@ class CascadeTransform : public MetaTransform
     BR_PROPERTY(float, scaleFactor, 1.2)
     BR_PROPERTY(int, minNeighbors, 5)
     BR_PROPERTY(bool, ROCMode, false)
-        
+    BR_PROPERTY(float, threshold, 0.0)
+
     // Training parameters - Default values provided trigger OpenCV defaults
     BR_PROPERTY(int, numStages, -1)
     BR_PROPERTY(int, w, -1)
@@ -374,64 +377,83 @@ class CascadeTransform : public MetaTransform
 
     void project(const Template &src, Template &dst) const
     {
-        TemplateList temp;
-        project(TemplateList() << src, temp);
-        if (!temp.isEmpty()) dst = temp.first();
-    }
-
-    void project(const TemplateList &src, TemplateList &dst) const
-    {
         CascadeClassifier *cascade = cascadeResource.acquire();
-        foreach (const Template &t, src) {
-            const bool enrollAll = t.file.getBool("enrollAll");
 
-            // Mirror the behavior of ExpandTransform in the special case
-            // of an empty template.
-            if (t.empty() && !enrollAll) {
-                dst.append(t);
-                continue;
-            }
+        std::vector<Rect> allRects;
+        std::vector<int> allRejectLevels;
+        std::vector<double> allLevelWeights;
 
-            for (int i=0; i<t.size(); i++) {
-                Mat m;
-                OpenCVUtils::cvtUChar(t[i], m);
-                std::vector<Rect> rects;
-                std::vector<int> rejectLevels;
-                std::vector<double> levelWeights;
-                if (ROCMode) cascade->detectMultiScale(m, rects, rejectLevels, levelWeights, scaleFactor, minNeighbors, (enrollAll ? 0 : CASCADE_FIND_BIGGEST_OBJECT) | CASCADE_SCALE_IMAGE, Size(minSize, minSize), Size(), true);
-                else         cascade->detectMultiScale(m, rects, scaleFactor, minNeighbors, enrollAll ? 0 : CASCADE_FIND_BIGGEST_OBJECT, Size(minSize, minSize));
+        dst = src;
 
-                if (!enrollAll && rects.empty())
-                    rects.push_back(Rect(0, 0, m.cols, m.rows));
+        if (src.empty())
+            return;
 
-                for (size_t j=0; j<rects.size(); j++) {
-                    Template u(t.file, m);
-                    if (rejectLevels.size() > j)
-                        u.file.set("Confidence", rejectLevels[j]*levelWeights[j]);
-                    else 
-                        u.file.set("Confidence", 1);
-                    const QRectF rect = OpenCVUtils::fromRect(rects[j]);
-                    u.file.appendRect(rect);
-                    u.file.set(model, rect);
-                    dst.append(u);
+        const bool enrollAll = src.file.getBool("enrollAll");
+
+        QList<int> angles = src.size() > 1 ? src.file.getList<int>("Angles", QList<int>()) : QList<int>() << src.file.get<int>("Angle", 0);
+        qDebug() << "src:" << src.size();
+        for (int i = 0; i < src.size(); i++) {
+            Mat m;
+            OpenCVUtils::cvtUChar(src[i], m);
+
+            std::vector<Rect> rects;
+            std::vector<int> rejectLevels;
+            std::vector<double> levelWeights;
+            if (ROCMode) cascade->detectMultiScale(m, rects, rejectLevels, levelWeights, scaleFactor, minNeighbors, (enrollAll ? 0 : CASCADE_FIND_BIGGEST_OBJECT) | CASCADE_SCALE_IMAGE, Size(minSize, minSize), Size(), true);
+            else         cascade->detectMultiScale(m, rects, scaleFactor, minNeighbors, enrollAll ? 0 : CASCADE_FIND_BIGGEST_OBJECT, Size(minSize, minSize));
+            qDebug("Before: %d, %d", rects[0].x, rects[0].y);
+            if (angles[i] != 0)
+                rotate(m, rects, -angles[i]);
+            qDebug("After: %d, %d", rects[0].x, rects[0].y);
+            allRects.insert(allRects.end(), rects.begin(), rects.end());
+            allRejectLevels.insert(allRejectLevels.end(), rejectLevels.begin(), rejectLevels.end());
+            allLevelWeights.insert(allLevelWeights.end(), levelWeights.begin(), levelWeights.end());
+        }
+
+        groupRectangles(allRects, allRejectLevels, allLevelWeights, minNeighbors);
+
+        if (!enrollAll && allRects.empty())
+            allRects.push_back(Rect(0, 0, src.m().cols, src.m().rows));
+
+        QList<float> confidences;
+        for (size_t j = 0; j < allRects.size(); j++) {
+            if (allRejectLevels.size() > j) {
+                float confidence = allRejectLevels[j]*allLevelWeights[j];
+                if (confidence > threshold) {
+                    dst.file.appendRect(allRects[j]);
+                    confidences.append(confidence);
                 }
+            } else {
+                dst.file.appendRect(allRects[j]);
+                confidences.append(1.);
             }
         }
+        dst.file.setList<float>("Confidences", confidences);
 
         cascadeResource.release(cascade);
     }
 
-    // TODO: Remove this code when ready to break binary compatibility
-    void store(QDataStream &stream) const
+    void rotate(const Mat &img, std::vector<Rect> &rects, int angle) const
     {
-        int size = 1;
-        stream << size;
-    }
-
-    void load(QDataStream &stream)
-    {
-        int size;
-        stream >> size;
+        Mat rotMatrix = getRotationMatrix2D(Point2f(img.rows/2,img.cols/2), angle, 1.0);
+        qDebug("Hello");
+        std::vector<Rect> rotatedRects;
+        foreach (const Rect &rect, rects) {
+            rotatedRects.push_back(Rect(Point2f(rect.tl().x*rotMatrix.at<double>(0,0)+
+                                                rect.tl().y*rotMatrix.at<double>(0,1)+
+                                                rotMatrix.at<double>(0,2),
+                                                rect.tl().x*rotMatrix.at<double>(1,0)+
+                                                rect.tl().y*rotMatrix.at<double>(1,1)+
+                                                rotMatrix.at<double>(1,2)),
+                                        Point2f(rect.br().x*rotMatrix.at<double>(0,0)+
+                                                rect.br().y*rotMatrix.at<double>(0,1)+
+                                                rotMatrix.at<double>(0,2),
+                                                rect.br().x*rotMatrix.at<double>(1,0)+
+                                                rect.br().y*rotMatrix.at<double>(1,1)+
+                                                rotMatrix.at<double>(1,2))));
+        }
+        rects.clear();
+        rects.insert(rects.end(), rotatedRects.begin(), rotatedRects.end());
     }
 };
 
