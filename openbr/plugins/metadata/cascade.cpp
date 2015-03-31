@@ -166,7 +166,8 @@ class CascadeResourceMaker : public ResourceMaker<CascadeClassifier>
 public:
     CascadeResourceMaker(const QString &model)
     {
-        file = Globals->sdkPath + "/share/openbr/models/";
+        //file = Globals->sdkPath + "/share/openbr/models/";
+        file = "/usr/local/share/openbr/models/";
         if      (model == "Ear")         file += "haarcascades/haarcascade_ear.xml";
         else if (model == "Eye")         file += "haarcascades/haarcascade_eye_tree_eyeglasses.xml";
         else if (model == "FrontalFace") file += "haarcascades/haarcascade_frontalface_alt2.xml";
@@ -195,7 +196,7 @@ private:
  * \author Josh Klontz \cite jklontz
  * \author David Crouse \cite dgcrouse
  */
-class CascadeTransform : public Transform
+class CascadeTransform : public MetaTransform
 {
     Q_OBJECT
     Q_PROPERTY(QString model READ get_model WRITE set_model RESET reset_model STORED false)
@@ -230,7 +231,7 @@ class CascadeTransform : public Transform
     BR_PROPERTY(float, scaleFactor, 1.2)
     BR_PROPERTY(int, minNeighbors, 5)
     BR_PROPERTY(bool, ROCMode, false)
-    BR_PROPERTY(float, threshold, 0.0)
+    BR_PROPERTY(float, threshold, -std::numeric_limits<float>::max())
 
     // Training parameters - Default values provided trigger OpenCV defaults
     BR_PROPERTY(int, numStages, -1)
@@ -377,34 +378,38 @@ class CascadeTransform : public Transform
 
     void project(const Template &src, Template &dst) const
     {
+        TemplateList temp;
+        project(TemplateList() << src, temp);
+        dst = temp.first();
+    }
+
+    void project(const TemplateList &src, TemplateList &dst) const
+    {
         CascadeClassifier *cascade = cascadeResource.acquire();
 
         std::vector<Rect> allRects;
         std::vector<int> allRejectLevels;
         std::vector<double> allLevelWeights;
 
-        dst = src;
-
         if (src.empty())
             return;
 
-        const bool enrollAll = src.file.getBool("enrollAll");
+        foreach (const Template &t, src) {
+            const bool enrollAll = t.file.getBool("enrollAll");
+            const int angle = t.file.get<int>("Angle", 0);
 
-        QList<int> angles = src.size() > 1 ? src.file.getList<int>("Angles", QList<int>()) : QList<int>() << src.file.get<int>("Angle", 0);
-        qDebug() << "src:" << src.size();
-        for (int i = 0; i < src.size(); i++) {
             Mat m;
-            OpenCVUtils::cvtUChar(src[i], m);
+            OpenCVUtils::cvtUChar(t, m);
 
             std::vector<Rect> rects;
             std::vector<int> rejectLevels;
             std::vector<double> levelWeights;
             if (ROCMode) cascade->detectMultiScale(m, rects, rejectLevels, levelWeights, scaleFactor, minNeighbors, (enrollAll ? 0 : CASCADE_FIND_BIGGEST_OBJECT) | CASCADE_SCALE_IMAGE, Size(minSize, minSize), Size(), true);
             else         cascade->detectMultiScale(m, rects, scaleFactor, minNeighbors, enrollAll ? 0 : CASCADE_FIND_BIGGEST_OBJECT, Size(minSize, minSize));
-            qDebug("Before: %d, %d", rects[0].x, rects[0].y);
-            if (angles[i] != 0)
-                rotate(m, rects, -angles[i]);
-            qDebug("After: %d, %d", rects[0].x, rects[0].y);
+
+            if (angle != 0)
+                rotate(m, rects, -angle); // negative to rotate back
+
             allRects.insert(allRects.end(), rects.begin(), rects.end());
             allRejectLevels.insert(allRejectLevels.end(), rejectLevels.begin(), rejectLevels.end());
             allLevelWeights.insert(allLevelWeights.end(), levelWeights.begin(), levelWeights.end());
@@ -412,45 +417,44 @@ class CascadeTransform : public Transform
 
         groupRectangles(allRects, allRejectLevels, allLevelWeights, minNeighbors);
 
-        if (!enrollAll && allRects.empty())
-            allRects.push_back(Rect(0, 0, src.m().cols, src.m().rows));
+        const Template t = src.first();
 
+        if (!t.file.getBool("enrollAll") && allRects.empty())
+            allRects.push_back(Rect(0, 0, t.m().cols, t.m().rows));
+
+        Template out(t.file, t.m());
         QList<float> confidences;
         for (size_t j = 0; j < allRects.size(); j++) {
             if (allRejectLevels.size() > j) {
                 float confidence = allRejectLevels[j]*allLevelWeights[j];
-                if (confidence > threshold) {
-                    dst.file.appendRect(allRects[j]);
+                if (confidence > threshold) { 
+                    out.file.appendRect(allRects[j]);
                     confidences.append(confidence);
                 }
             } else {
-                dst.file.appendRect(allRects[j]);
+                out.file.appendRect(allRects[j]);
                 confidences.append(1.);
             }
         }
-        dst.file.setList<float>("Confidences", confidences);
+        out.file.setList<float>("Confidences", confidences);
+        dst.append(out);
 
         cascadeResource.release(cascade);
     }
 
-    void rotate(const Mat &img, std::vector<Rect> &rects, int angle) const
+    static Point2f rotatePoint(const Point2f &p, const Mat &r)
+    {
+        return Point2f(p.x*r.at<double>(0,0) + p.y*r.at<double>(0,1) + r.at<double>(0,2),
+                       p.x*r.at<double>(1,0) + p.y*r.at<double>(1,1) + r.at<double>(1,2));
+    }
+
+    static void rotate(const Mat &img, std::vector<Rect> &rects, int angle)
     {
         Mat rotMatrix = getRotationMatrix2D(Point2f(img.rows/2,img.cols/2), angle, 1.0);
-        qDebug("Hello");
         std::vector<Rect> rotatedRects;
         foreach (const Rect &rect, rects) {
-            rotatedRects.push_back(Rect(Point2f(rect.tl().x*rotMatrix.at<double>(0,0)+
-                                                rect.tl().y*rotMatrix.at<double>(0,1)+
-                                                rotMatrix.at<double>(0,2),
-                                                rect.tl().x*rotMatrix.at<double>(1,0)+
-                                                rect.tl().y*rotMatrix.at<double>(1,1)+
-                                                rotMatrix.at<double>(1,2)),
-                                        Point2f(rect.br().x*rotMatrix.at<double>(0,0)+
-                                                rect.br().y*rotMatrix.at<double>(0,1)+
-                                                rotMatrix.at<double>(0,2),
-                                                rect.br().x*rotMatrix.at<double>(1,0)+
-                                                rect.br().y*rotMatrix.at<double>(1,1)+
-                                                rotMatrix.at<double>(1,2))));
+            Point2f center = Point2f(rect.x + (rect.width/2), rect.y + (rect.height/2));
+            rotatedRects.push_back(Rect(rotatePoint(center, rotMatrix) - Point2f(rect.width/2, rect.height/2), rect.size()));
         }
         rects.clear();
         rects.insert(rects.end(), rotatedRects.begin(), rotatedRects.end());
