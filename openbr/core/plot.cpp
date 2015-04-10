@@ -157,6 +157,7 @@ struct RPlot
                        "IM <- data[grep(\"IM\",data$Plot),-c(1)]\n"
                        "GM <- data[grep(\"GM\",data$Plot),-c(1)]\n"
                        "DET <- data[grep(\"DET\",data$Plot),-c(1)]\n"
+                       "EIT <- data[grep(\"EIT\",data$Plot),-c(1)]\n"
                        "FAR <- data[grep(\"FAR\",data$Plot),-c(1)]\n"
                        "FRR <- data[grep(\"FRR\",data$Plot),-c(1)]\n"
                        "SD <- data[grep(\"SD\",data$Plot),-c(1)]\n"
@@ -176,6 +177,7 @@ struct RPlot
                        "IM$Y <- as.character(IM$Y)\n"
                        "GM$Y <- as.character(GM$Y)\n"
                        "DET$Y <- as.numeric(as.character(DET$Y))\n"
+                       "EIT$Y <- as.numeric(as.character(EIT$Y))\n"
                        "ERR$Y <- as.numeric(as.character(ERR$Y))\n"
                        "SD$Y <- as.factor(unique(as.character(SD$Y)))\n"
                        "FT$Y <- as.numeric(as.character(FT$Y))\n"
@@ -332,6 +334,16 @@ bool Plot(const QStringList &files, const File &destination, bool show)
                             (p.minor.size > 1 ? QString(", linetype=factor(%1)").arg(p.minor.header) : QString()) +
                             QString(", xlab=\"False Accept Rate\", ylab=\"False Reject Rate\") + geom_abline(alpha=0.5, colour=\"grey\", linetype=\"dashed\") + theme_minimal()") +
                             ((p.major.smooth || p.minor.smooth) && p.confidence != 0 ? " + geom_errorbar(data=DET[seq(1, NROW(DET), by = 29),], aes(x=X, ymin=Y-ci, ymax=Y+ci), width=0.1, alpha=I(1/2))" : QString()) +
+                            (p.major.size > 1 ? getScale("colour", p.major.header, p.major.size) : QString()) +
+                            (p.minor.size > 1 ? QString(" + scale_linetype_discrete(\"%1\")").arg(p.minor.header) : QString()) +
+                            QString(" + theme(legend.title = element_text(size = %1), plot.title = element_text(size = %1), axis.text = element_text(size = %1), axis.title.x = element_text(size = %1), axis.title.y = element_text(size = %1),"
+                            " legend.position=%2, legend.background = element_rect(fill = 'white'), panel.grid.major = element_line(colour = \"gray\"), panel.grid.minor = element_line(colour = \"gray\", linetype = \"dashed\"), legend.text = element_text(size = %1))").arg(QString::number(rocOpts.get<float>("textSize",12)), rocOpts.contains("legendPosition") ? "c"+QtUtils::toString(rocOpts.get<QPointF>("legendPosition")) : "'bottom'") +
+                            QString(" + scale_x_log10(labels=trans_format(\"log10\", math_format())) + scale_y_log10(labels=trans_format(\"log10\", math_format())) + annotation_logticks()\n\n")));
+
+    p.file.write(qPrintable(QString("qplot(X, Y, data=EIT, geom=\"line\"") +
+                            (p.major.size > 1 ? QString(", colour=factor(%1)").arg(p.major.header) : QString()) +
+                            (p.minor.size > 1 ? QString(", linetype=factor(%1)").arg(p.minor.header) : QString()) +
+                            QString(", xlab=\"False Positive Identification Rate (FPIR)\", ylab=\"False Negative Identification Rate (FNIR)\") + theme_minimal()") +
                             (p.major.size > 1 ? getScale("colour", p.major.header, p.major.size) : QString()) +
                             (p.minor.size > 1 ? QString(" + scale_linetype_discrete(\"%1\")").arg(p.minor.header) : QString()) +
                             QString(" + theme(legend.title = element_text(size = %1), plot.title = element_text(size = %1), axis.text = element_text(size = %1), axis.title.x = element_text(size = %1), axis.title.y = element_text(size = %1),"
