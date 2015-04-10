@@ -214,7 +214,7 @@ float Evaluate(const Mat &simmat, const Mat &mask, const QString &csv, const QSt
             Comparison comparison(simmat_val, j, i, mask_val == BEE::Match);
             comparisons.append(comparison);
             if (comparison.genuine) {
-                if (genuineSearches[comparison.query] = 0) {
+                if (genuineSearches[comparison.query] == 0) {
                     genuineSearches[comparison.query] = 1;
                     totalGenuineSearches++;
                 }
@@ -306,7 +306,7 @@ float Evaluate(const Mat &simmat, const Mat &mask, const QString &csv, const QSt
     if (operatingPoints.size() > 2)  operatingPoints.takeLast(); // Remove point (1,1)
 
     if (searchOperatingPoints.size() == 0) searchOperatingPoints.append(SearchOperatingPoint(1, 1, 1));
-    if (searchOperatingPoints.size() == 1) searchOperatingPoints.prepend(SearchOperatingPoint(0, 0, 0));
+    if (searchOperatingPoints.size() == 1) searchOperatingPoints.prepend(SearchOperatingPoint(0, 0, 1));
     if (searchOperatingPoints.size() > 2)  searchOperatingPoints.takeLast(); // Remove point (1,1)
 
     // Write Metadata table
