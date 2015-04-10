@@ -54,6 +54,14 @@ struct OperatingPoint
         : score(_score), FAR(_FAR), TAR(_TAR) {}
 };
 
+struct SearchOperatingPoint
+{
+    float score, FPIR, FNIR;
+    OperatingPoint() {}
+    OperatingPoint(float _score, float _FPIR, float _FNIR)
+        :score(_score), FPIR(_FPIR), FNIR(_FNIR) {}
+};
+
 static OperatingPoint getOperatingPointGivenFAR(const QList<OperatingPoint> &operatingPoints, float FAR)
 {
     int index = 0;
@@ -193,6 +201,9 @@ float Evaluate(const Mat &simmat, const Mat &mask, const QString &csv, const QSt
 
     // Make comparisons
     QList<Comparison> comparisons; comparisons.reserve(simmat.rows*simmat.cols);
+    QVector<int> genuineSearches(simmat.rows, 0);
+    int totalGenuineSearches = 0;
+    int totalImpostorSearches = 0;
     int genuineCount = 0, impostorCount = 0, numNaNs = 0;
     for (int i=0; i<simmat.rows; i++) {
         for (int j=0; j<simmat.cols; j++) {
@@ -203,6 +214,10 @@ float Evaluate(const Mat &simmat, const Mat &mask, const QString &csv, const QSt
             Comparison comparison(simmat_val, j, i, mask_val == BEE::Match);
             comparisons.append(comparison);
             if (comparison.genuine) {
+                if (genuineSearches[comparison.query] = 0) {
+                    genuineSearches[comparison.query] = 1;
+                    totalGenuineSearches++;
+                }
                 genuineCount++;
             } else {
                 impostorCount++;
@@ -210,6 +225,7 @@ float Evaluate(const Mat &simmat, const Mat &mask, const QString &csv, const QSt
         }
     }
 
+    totalImpostorSearches = simmat.rows - totalGenuineSearches;
     if (numNaNs > 0) qWarning("Encountered %d NaN scores!", numNaNs);
     if (genuineCount == 0) qFatal("No genuine scores!");
     if (impostorCount == 0) qFatal("No impostor scores!");
@@ -218,12 +234,15 @@ float Evaluate(const Mat &simmat, const Mat &mask, const QString &csv, const QSt
     std::stable_sort(comparisons.begin(), comparisons.end());
 
     QList<OperatingPoint> operatingPoints;
+    QList<SearchOperatingPoint> searchOperatingPoints;
     QList<float> genuines; genuines.reserve(sqrt((float)comparisons.size()));
     QList<float> impostors; impostors.reserve(comparisons.size());
     QVector<int> firstGenuineReturns(simmat.rows, 0);
 
     int falsePositives = 0, previousFalsePositives = 0;
     int truePositives = 0, previousTruePositives = 0;
+    int falseMatches = 0, trueMatches = 0;
+    int previousFalseMatches = 0, previousTrueMatches = 0;
     int index = 0;
     int EERIndex = 0;
     float minGenuineScore = std::numeric_limits<float>::max();
@@ -237,6 +256,10 @@ float Evaluate(const Mat &simmat, const Mat &mask, const QString &csv, const QSt
             const Comparison &comparison = comparisons[index];
             if (comparison.genuine) {
                 truePositives++;
+                if (genuineSearches[comparison.query] == 1) {
+                    genuineSearches[comparison.query]++;
+                    trueMatches++;
+                }
                 genuines.append(comparison.score);
                 if (firstGenuineReturns[comparison.query] < 1)
                     firstGenuineReturns[comparison.query] = abs(firstGenuineReturns[comparison.query]) + 1;
@@ -245,6 +268,10 @@ float Evaluate(const Mat &simmat, const Mat &mask, const QString &csv, const QSt
                     minGenuineScore = comparison.score;
             } else {
                 falsePositives++;
+                if (genuineSearches[comparison.query] == 0) {
+                    genuineSearches[comparison.query] = -1;
+                    falseMatches++;
+                }
                 impostors.append(comparison.score);
                 if (firstGenuineReturns[comparison.query] < 1)
                     firstGenuineReturns[comparison.query]--;
@@ -265,11 +292,22 @@ float Evaluate(const Mat &simmat, const Mat &mask, const QString &csv, const QSt
             previousFalsePositives = falsePositives;
             previousTruePositives = truePositives;
         }
+        if ((falseMatches > previousFalseMatches) &&
+             (trueMatches > previousTrueMatches)) {
+
+            searchOperatingPoints.append(SearchOperatingPoint(thresh, float(falseMatches)/totalImpostorSearches, 1 - (float(trueMatches)/totalGenuineSearches)));
+            previousFalseMatches = falseMatches;
+            previousTrueMatches = trueMatches;
+        }
     }
 
     if (operatingPoints.size() == 0) operatingPoints.append(OperatingPoint(1, 1, 1));
     if (operatingPoints.size() == 1) operatingPoints.prepend(OperatingPoint(0, 0, 0));
     if (operatingPoints.size() > 2)  operatingPoints.takeLast(); // Remove point (1,1)
+
+    if (searchOperatingPoints.size() == 0) searchOperatingPoints.append(SearchOperatingPoint(1, 1, 1));
+    if (searchOperatingPoints.size() == 1) searchOperatingPoints.prepend(SearchOperatingPoint(0, 0, 0));
+    if (searchOperatingPoints.size() > 2)  searchOperatingPoints.takeLast(); // Remove point (1,1)
 
     // Write Metadata table
     QStringList lines;
@@ -316,6 +354,13 @@ float Evaluate(const Mat &simmat, const Mat &mask, const QString &csv, const QSt
         FAR *=1.02807;
     }
 
+    // Write Identification Error Tradeoff (IET)
+    int points = qMin(searchOperatingPoints.size(), Max_Points);
+    for (int i=0; i<points; i++) {
+        const SearchOperatingPoint &searchOperatingPoint = searchOperatingPoints[double(i) / double(points-1) * double(searchOperatingPoints.size()-1)];
+        lines.append(QString("IET,%1,%2").arg(QString::number(searchOperatingPoint.FPIR),
+                                              QString::number(searchOperatingPoint.FNIR)));
+    }
     // Write TAR@FAR Table (FT)
     foreach (float far, QList<float>() << 1e-6 << 1e-5 << 1e-4 << 1e-3 << 1e-2 << 1e-1)
       lines.append(qPrintable(QString("FT,%1,%2").arg(
