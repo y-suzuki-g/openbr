@@ -157,7 +157,7 @@ struct RPlot
                        "IM <- data[grep(\"IM\",data$Plot),-c(1)]\n"
                        "GM <- data[grep(\"GM\",data$Plot),-c(1)]\n"
                        "DET <- data[grep(\"DET\",data$Plot),-c(1)]\n"
-                       "EIT <- data[grep(\"EIT\",data$Plot),-c(1)]\n"
+                       "IET <- data[grep(\"IET\",data$Plot),-c(1)]\n"
                        "FAR <- data[grep(\"FAR\",data$Plot),-c(1)]\n"
                        "FRR <- data[grep(\"FRR\",data$Plot),-c(1)]\n"
                        "SD <- data[grep(\"SD\",data$Plot),-c(1)]\n"
@@ -177,7 +177,7 @@ struct RPlot
                        "IM$Y <- as.character(IM$Y)\n"
                        "GM$Y <- as.character(GM$Y)\n"
                        "DET$Y <- as.numeric(as.character(DET$Y))\n"
-                       "EIT$Y <- as.numeric(as.character(EIT$Y))\n"
+                       "IET$Y <- as.numeric(as.character(IET$Y))\n"
                        "ERR$Y <- as.numeric(as.character(ERR$Y))\n"
                        "SD$Y <- as.factor(unique(as.character(SD$Y)))\n"
                        "FT$Y <- as.numeric(as.character(FT$Y))\n"
@@ -340,7 +340,7 @@ bool Plot(const QStringList &files, const File &destination, bool show)
                             " legend.position=%2, legend.background = element_rect(fill = 'white'), panel.grid.major = element_line(colour = \"gray\"), panel.grid.minor = element_line(colour = \"gray\", linetype = \"dashed\"), legend.text = element_text(size = %1))").arg(QString::number(rocOpts.get<float>("textSize",12)), rocOpts.contains("legendPosition") ? "c"+QtUtils::toString(rocOpts.get<QPointF>("legendPosition")) : "'bottom'") +
                             QString(" + scale_x_log10(labels=trans_format(\"log10\", math_format())) + scale_y_log10(labels=trans_format(\"log10\", math_format())) + annotation_logticks()\n\n")));
 
-    p.file.write(qPrintable(QString("qplot(X, Y, data=EIT, geom=\"line\"") +
+    p.file.write(qPrintable(QString("qplot(X, Y, data=IET, geom=\"line\"") +
                             (p.major.size > 1 ? QString(", colour=factor(%1)").arg(p.major.header) : QString()) +
                             (p.minor.size > 1 ? QString(", linetype=factor(%1)").arg(p.minor.header) : QString()) +
                             QString(", xlab=\"False Positive Identification Rate (FPIR)\", ylab=\"False Negative Identification Rate (FNIR)\") + theme_minimal()") +
