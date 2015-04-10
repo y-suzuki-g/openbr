@@ -57,8 +57,8 @@ struct OperatingPoint
 struct SearchOperatingPoint
 {
     float score, FPIR, FNIR;
-    OperatingPoint() {}
-    OperatingPoint(float _score, float _FPIR, float _FNIR)
+    SearchOperatingPoint() {}
+    SearchOperatingPoint(float _score, float _FPIR, float _FNIR)
         :score(_score), FPIR(_FPIR), FNIR(_FNIR) {}
 };
 
@@ -393,7 +393,7 @@ float Evaluate(const Mat &simmat, const Mat &mask, const QString &csv, const QSt
     }
 
     // Write SD & KDE
-    int points = qMin(qMin(Max_Points, genuines.size()), impostors.size());
+    points = qMin(qMin(Max_Points, genuines.size()), impostors.size());
     QList<double> sampledGenuineScores; sampledGenuineScores.reserve(points);
     QList<double> sampledImpostorScores; sampledImpostorScores.reserve(points);
 
