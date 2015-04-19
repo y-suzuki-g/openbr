@@ -117,7 +117,7 @@ if [ ! -d ../data/LFW/img ]; then
   rm lfw.tgz
 fi
 
-./downloadMeds.sh
+./downloadMEDS.sh
 
 #LFPW
 if [ ! -d ../data/lfpw/trainset ]; then
